@@ -291,27 +291,27 @@ video {
 
 .videoholder.layout1 {
   grid-template-areas:
-    "leftview frontview rightview"
+    "leftrepeaterview frontview rightrepeaterview"
     "mapview backview infoview";
 }
 
 .videoholder.layout2 {
   grid-template-areas:
     "mapview frontview infoview"
-    "leftview backview rightview";
+    "leftrepeaterview backview rightrepeaterview";
 }
 
 .videoholder.layout3 {
   grid-template-areas:
     "mapview frontview infoview"
-    "rightview backview leftview";
+    "rightrepeaterview backview leftrepeaterview";
 }
 
 .videoholder.layout4 {
   grid-template-columns: 20% 30% 30% 20%;
   grid-template-areas:
     ". frontview frontview ."
-    "leftview leftview rightview rightview"
+    "leftrepeaterview leftrepeaterview rightrepeaterview rightrepeaterview"
     ". backview backview ."
     "mapview mapview infoview infoview";
 }
@@ -320,7 +320,7 @@ video {
   grid-template-columns: 20% 30% 30% 20%;
   grid-template-areas:
     ". frontview frontview ."
-    "rightview rightview leftview leftview"
+    "rightrepeaterview rightrepeaterview leftrepeaterview leftrepeaterview"
     ". backview backview ."
     "mapview mapview infoview infoview";
 }
@@ -331,16 +331,16 @@ video {
   align-self: center;
 }
 
-.leftview {
-  grid-area: leftview;
+.leftrepeaterview {
+  grid-area: leftrepeaterview;
 }
 
 .frontview {
   grid-area: frontview;
 }
 
-.rightview {
-  grid-area: rightview;
+.rightrepeaterview {
+  grid-area: rightrepeaterview;
 }
 
 .mapview {
@@ -917,14 +917,14 @@ video {
       </div>
       <div>
         <div class="videoholder layout3">
-          <video disableRemotePlayback playsinline id="leftview" class="videogriditem leftview" style="z-index:1;"></video>
-          <canvas id="leftviewfreeze" class="videogriditem leftview"  style="z-index:0;"></canvas>
+          <video disableRemotePlayback playsinline id="leftrepeaterview" class="videogriditem leftrepeaterview" style="z-index:1;"></video>
+          <canvas id="leftrepeaterviewfreeze" class="videogriditem leftrepeaterview"  style="z-index:0;"></canvas>
 
           <video disableRemotePlayback playsinline id="frontview" class="videogriditem frontview" style="z-index:1;"></video>
           <canvas id="frontviewfreeze" class="videogriditem frontview" style="z-index:0;"></canvas>
 
-          <video disableRemotePlayback playsinline id="rightview" class="videogriditem rightview" style="z-index:1;"></video>
-          <canvas id="rightviewfreeze" class="videogriditem rightview" style="z-index:0;"></canvas>
+          <video disableRemotePlayback playsinline id="rightrepeaterview" class="videogriditem rightrepeaterview" style="z-index:1;"></video>
+          <canvas id="rightrepeaterviewfreeze" class="videogriditem rightrepeaterview" style="z-index:0;"></canvas>
 
           <div class="videogriditem mapview" style="margin:0px;z-index:0;">
             <iframe id="sentrymap"></iframe>
@@ -1062,39 +1062,39 @@ showcontrols();
 var currentLayout = 1;
 
 function setLayout(layout) {
-  var leftview = document.getElementById("leftview");
-  var rightview = document.getElementById("rightview");
+  var leftrepeaterview = document.getElementById("leftrepeaterview");
+  var rightrepeaterview = document.getElementById("rightrepeaterview");
   var backview = document.getElementById("backview");
   var videogrid = document.querySelector(".videoholder");
   if (layout == 1) {
     // mirrorleft-front-mirrorright on top, map-mirrorrear-info on bottom
-    leftview.classList.add("flipped");
-    rightview.classList.add("flipped");
+    leftrepeaterview.classList.add("flipped");
+    rightrepeaterview.classList.add("flipped");
     backview.classList.add("flipped");
     videogrid.classList="videoholder layout1";
   } else if (layout == 2) {
     // map-front-info on top, mirrorleft-mirrorrear-mirrorright on bottom
-    leftview.classList.add("flipped");
-    rightview.classList.add("flipped");
+    leftrepeaterview.classList.add("flipped");
+    rightrepeaterview.classList.add("flipped");
     backview.classList.add("flipped");
     videogrid.classList="videoholder layout2";
   } else if (layout == 4) {
     // front on top, sides in middle, rear on bottom, mirrored
-    leftview.classList.add("flipped");
-    rightview.classList.add("flipped");
+    leftrepeaterview.classList.add("flipped");
+    rightrepeaterview.classList.add("flipped");
     backview.classList.add("flipped");
     videogrid.classList="videoholder layout4";
   } else if (layout == 5) {
     // front on top, sides in middle, rear on bottom
-    leftview.classList.remove("flipped");
-    rightview.classList.remove("flipped");
+    leftrepeaterview.classList.remove("flipped");
+    rightrepeaterview.classList.remove("flipped");
     backview.classList.remove("flipped");
     videogrid.classList="videoholder layout5";
   } else {
     layout = 3;
     // (default) map-front-info on top, right-rear-left on bottom
-    leftview.classList.remove("flipped");
-    rightview.classList.remove("flipped");
+    leftrepeaterview.classList.remove("flipped");
+    rightrepeaterview.classList.remove("flipped");
     backview.classList.remove("flipped");
     videogrid.classList="videoholder layout3";
   }
@@ -1762,8 +1762,8 @@ class VideoSegment {
   group;
   sequence;
   front;
-  left;
-  right;
+  leftrepeater;
+  rightrepeater;
   back;
   datetime;
   numangles;
@@ -1798,10 +1798,10 @@ class VideoSegment {
   addVideo(path) {
     if (path.includes('front')) {
       this.front=path;
-    } else if (path.includes('left')) {
-      this.left=path;
-    } else if (path.includes('right')) {
-      this.right=path;
+    } else if (path.includes('left_repeater')) {
+      this.leftrepeater=path;
+    } else if (path.includes('right_repeater')) {
+      this.rightrepeater=path;
     } else if (path.includes('back')) {
       this.back=path;
     } else {
@@ -1914,8 +1914,8 @@ class VideoSegment {
     var prefix = "TeslaCam/" + this.group + "/" + this.sequence + "/";
     log("===== segment =====");
     freezeVideoElems();
-    if (this.left != undefined) {
-      videoelems[0].src = cachebustingurl(prefix + this.left);
+    if (this.leftrepeater != undefined) {
+      videoelems[0].src = cachebustingurl(prefix + this.leftrepeater);
     } else {
       videoelems[0].removeAttribute('src');
     }
@@ -1924,8 +1924,8 @@ class VideoSegment {
     } else {
       videoelems[1].removeAttribute('src');
     }
-    if (this.right != undefined) {
-      videoelems[2].src = cachebustingurl(prefix + this.right);
+    if (this.rightrepeater != undefined) {
+      videoelems[2].src = cachebustingurl(prefix + this.rightrepeater);
     } else {
       videoelems[2].removeAttribute('src');
     }
@@ -1955,7 +1955,7 @@ class VideoSegment {
     }
     log("angles: " + this.numangles);
 
-    for (var n of [this.left, this.right, this.front, this.back]) {
+    for (var n of [this.leftrepeater, this.rightrepeater, this.front, this.back]) {
       if (n != undefined) {
         showCurrentSegment(n.substring(0, 19));
         break;
@@ -2388,16 +2388,16 @@ var videos={};
 var currentsequence;
 
 var videoelems = [
-  document.getElementById('leftview'),
+  document.getElementById('leftrepeaterview'),
   document.getElementById('frontview'),
-  document.getElementById('rightview'),
+  document.getElementById('rightrepeaterview'),
   document.getElementById('backview')
 ];
 
 var canvaselems = [
-  document.getElementById('leftviewfreeze'),
+  document.getElementById('leftrepeaterviewfreeze'),
   document.getElementById('frontviewfreeze'),
-  document.getElementById('rightviewfreeze'),
+  document.getElementById('rightrepeaterviewfreeze'),
   document.getElementById('backviewfreeze')
 ];
 
