@@ -178,16 +178,22 @@ function pip3_install () {
   pip3 install "$@"
 }
 
+function check_at_most_one_wake_api () {
+  if [[ ( -n "${TESSIE_API_TOKEN:+x}" && -n "${TESLAFI_API_TOKEN:+x}" ) ||
+        ( -n "${TESSIE_API_TOKEN:+x}" && -n "${TESLA_BLE_VIN:+x}" ) ||
+        ( -n "${TESLAFI_API_TOKEN:+x}" && -n "${TESLA_BLE_VIN:+x}" ) ]]
+  then
+    log_progress "STOP: You're trying to set up multiple control providers at the same time."
+    log_progress "Only 1 can be enabled at a time."
+    return 1
+  fi
+  return 0
+}
+
 function check_teslafi_api () {
   if [[ ( -n "${TESLAFI_API_TOKEN:+x}" ) ]]
   then
-    if [[ ( -n "${TESSIE_API_TOKEN:+x}" ) ]]    
-    then
-      log_progress "STOP: You're trying to setup Tessie and TeslaFi APIs at the same time."
-      log_progress "Only 1 can be enabled at a time."
-    else
-      log_progress "TeslaFi API enabled." 
-    fi
+    log_progress "TeslaFi API enabled."
   else
     log_progress "TeslaFi API not enabled because no TeslaFi credential was provided."
   fi
@@ -196,11 +202,7 @@ function check_teslafi_api () {
 function check_tessie_api () {
   if [[ ( -n "${TESSIE_API_TOKEN:+x}" ) ]]
   then
-    if [[ ( -n "${TESLAFI_API_TOKEN:+x}" ) ]]    
-    then
-      log_progress "STOP: You're trying to setup Tessie and TeslaFi APIs at the same time."
-      log_progress "Only 1 can be enabled at a time."
-    elif [[ ( -z "${TESSIE_VIN:+x}" ) ]]    
+    if [[ ( -z "${TESSIE_VIN:+x}" ) ]]
     then
       log_progress "STOP: Tessie API requires the VIN number to be provided."
       log_progress "Please set TESSIE_VIN in the config file."
@@ -211,10 +213,46 @@ function check_tessie_api () {
         DEBIAN_FRONTEND=noninteractive apt-get -y --force-yes install jq
       fi
 
-      log_progress "Tessie API enabled." 
+      log_progress "Tessie API enabled."
     fi
   else
     log_progress "Tessie API not enabled because no Tessie credential was provided."
+  fi
+}
+
+function check_and_configure_tesla_ble () {
+  local install_path="$1"
+  if [[ ( -n "${TESLA_BLE_VIN:+x}" ) ]]
+  then
+    log_progress "Tesla BLE enabled for VIN ${TESLA_BLE_VIN^^}."
+    install_tesla_ble_packages "$install_path"
+
+    local pairing_needed=true
+    mkdir -p /root/.ble
+    if [ ! -f /root/.ble/key_public.pem ] || [ ! -f /root/.ble/key_private.pem ]
+    then
+      "$install_path/tesla-keygen" -key-file /root/.ble/key_private.pem -output /root/.ble/key_public.pem create
+      chmod 600 /root/.ble/key_private.pem
+      chmod 644 /root/.ble/key_public.pem
+      log_progress "Generated keys for Tesla BLE interface."
+    elif "$install_path/tesla-control" -ble -vin "${TESLA_BLE_VIN^^}" body-controller-state; then
+      if "$install_path/tesla-control" -ble -vin "${TESLA_BLE_VIN^^}" session-info /root/.ble/key_private.pem infotainment; then
+        log_progress "Tesla BLE keys exist and are paired."
+        pairing_needed=false
+      else
+        log_progress "WARNING: Tesla BLE keys already exist, but are not paired."
+      fi
+    else
+      log_progress "WARNING: Tesla BLE keys exist, but the car is not reachable."
+      log_progress "If you are performing setup away from your car, this is expected. Otherwise, please check the VIN and try again."
+      log_progress "If you have not already, please visit the web UI after TeslaUSB is in the car to pair the key."
+      pairing_needed=false
+    fi
+
+    if $pairing_needed
+    then
+      log_progress "Please visit the web UI after TeslaUSB is in the car to pair the key."
+    fi
   fi
 }
 
@@ -259,6 +297,29 @@ function install_matrix_packages () {
   install_python3_pip
   setup_progress "Installing matrix python packages..."
   pip3_install matrix-nio
+}
+
+function install_tesla_ble_packages () {
+  local install_path="$1"
+  local binary_dir=/tmp/binarydir
+
+  umount "$binary_dir" &> /dev/null || true
+  rm -rf "$binary_dir"
+  mkdir -p "$binary_dir"
+  mount -t tmpfs none "$binary_dir"
+  (
+    cd "$binary_dir"
+    curlwrapper -L "https://github.com/MikeBishop/tesla-vehicle-command-arm-binaries/releases/latest/download/vehicle-command-binaries-linux-armv6.tar.gz" | tar zxf - --strip-components=1
+  )
+
+  for binary in tesla-control tesla-keygen; do
+    cp "${binary_dir}/$binary" "$install_path/$binary"
+    chmod +x "$install_path/$binary"
+    setup_progress "Downloaded $install_path/$binary ..."
+  done
+
+  umount "$binary_dir" &> /dev/null || true
+  rm -rf "$binary_dir"
 }
 
 function check_signal_configuration () {
@@ -617,8 +678,12 @@ fi
 
 mkdir -p /root/bin
 
-check_teslafi_api
-check_tessie_api
+if check_at_most_one_wake_api
+then
+  check_teslafi_api
+  check_tessie_api
+  check_and_configure_tesla_ble /root/bin
+fi
 check_and_configure_pushover
 check_and_configure_gotify
 check_and_configure_ifttt

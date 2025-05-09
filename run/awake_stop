@@ -5,9 +5,7 @@ if [[ ( -n "${TESLAFI_API_TOKEN:+x}" ) ]]
 then
   curl -s -H "Authorization: Bearer $TESLAFI_API_TOKEN" "https://www.teslafi.com/feed.php?command=set_sentry_mode&sentryMode=false&noWake=true"
   log "TeslaFi: Command sent to disable Sentry Mode."
-fi
-
-if [[ -n "${TESSIE_API_TOKEN:+x}" ]]
+elif [[ -n "${TESSIE_API_TOKEN:+x}" ]]
 # Use Tessie API to disable Sentry Mode
 then
   http_response=$(curl -s -w "%{http_code}" \
@@ -41,5 +39,14 @@ then
         log "Tessie: Failed to set Sentry Mode. Response data: $response_body"
       fi
     fi
+  fi
+elif [[ -n "${TESLA_BLE_VIN:+x}" ]]
+# Use Tesla BLE API to disable Sentry Mode
+then
+  if /root/bin/tesla-control -ble -key-file /root/.ble/key_private.pem -vin "${TESLA_BLE_VIN^^}" sentry-mode off
+  then
+    log "Tesla BLE: Command sent to disable Sentry Mode."
+  else
+    log "Tesla BLE: Failed to set Sentry Mode."
   fi
 fi

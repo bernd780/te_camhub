@@ -873,6 +873,11 @@ video {
         <span id="speedtext" style="padding-left:10px;"></span>
       </span>
       <p>
+        <div id="pairingdiv">
+          <button class="group2" id="pairKey" onclick="pairBLEkey();">Pair BLE with Car</button>
+          <span id="pairtext" style="padding-left:20px;"></span>
+        </div>
+      <p>
       <button class="group2" id="rebootbutton" onclick="rebootfunc(this);">Restart Raspberry Pi</button><span id="reboottext" style="padding-left:20px;"></span>
     </div>
   </div>
@@ -1405,6 +1410,89 @@ function setbuttonsdisabled(group, disabled) {
   }
 }
 
+function pairBLEkey() {
+  var msg=document.getElementById('pairtext');
+  msg.textContent="Initiating pairing request";
+  var button=document.getElementById('pairKey');
+  button.disabled=true;
+  button.textContent="Pairing...";
+  setbuttonsdisabled('group1', true);
+  setbuttonsdisabled('group2', true);
+
+  var request = new XMLHttpRequest();
+  request.open('GET', cachebustingurl('cgi-bin/pairBLEkey.sh'));
+  request.setRequestHeader("Cache-Control", "no-cache, no-store, max-age=0");
+  request.onreadystatechange = function () {
+    log('readstatechange, state: ' + request.readyState + ', status: ' + request.status);
+    if (request.readyState === 4) {
+      let result = request.responseText;
+
+      if (request.status >= 200 && request.status < 300) {
+        msg.textContent = "Pairing started. Tap keycard on center console to confirm.";
+        setTimeout(function () { waitforpairing(button, 0); }, 5000);
+      } else {
+        log("pairing failed");
+        const pattern = /<p>(.*?)<\/p>/gs;
+
+        let matches = result.match(pattern);
+        if (matches && matches.length > 0) {
+          let errorString = matches[0].replace(/<\/?p>/g, "");
+          if (errorString.includes("maximum number of BLE devices")) {
+            msg.textContent = "Too many BLE devices active; turn off Bluetooth on nearby phone keys and try again.";
+          } else
+            msg.textContent = errorString;
+        } else {
+          msg.textContent = "Pairing failed. Please try again.";
+        }
+        button.disabled = false;
+        button.textContent = "Pair BLE with Car";
+        setbuttonsdisabled('group1', false);
+        setbuttonsdisabled('group2', false);
+     }
+
+    }
+  }
+  request.send();
+
+}
+
+function waitforpairing(button, count) {
+  var request = new XMLHttpRequest();
+  request.open('GET', cachebustingurl('cgi-bin/checkBLEstatus.sh'));
+  request.setRequestHeader("Cache-Control", "no-cache, no-store, max-age=0");
+  request.onreadystatechange = function () {
+    log('readstatechange, state: ' + request.readyState + ', status: ' + request.status);
+    if (request.readyState === 4) {
+      if (request.status === 200) {
+        result = request.responseText;
+      } else {
+        log("unexpected pairing response");
+        result = "";
+      }
+
+      if (result.indexOf("<p>paired</p>") > 0) {
+        log("pairing succeeded");
+        var msg=document.getElementById('pairtext');
+        msg.textContent="Successfully paired with car.";
+      } else if (count > 12) {
+        log("pairing failed");
+        var msg=document.getElementById('pairtext');
+        msg.textContent="Pairing failed. Please try again.";
+      } else {
+        log("Still waiting for pairing");
+        window.setTimeout(function() { waitforpairing(button, count + 1); }, 5000);
+        return;
+      }
+
+      button.disabled = false;
+      button.textContent = "Pair BLE with Car";
+      setbuttonsdisabled('group1', false);
+      setbuttonsdisabled('group2', false);
+    }
+  }
+  request.send();
+}
+
 function restorerebootbutton(button) {
   button.disabled=false;
   button.textContent='Restart Raspberry Pi';
@@ -1660,8 +1748,13 @@ function readconfig() {
       const toolsbtn = document.querySelector("#tab4");
       toolsbtn.checked = true;
     }
-
-
+    const blebtn = document.getElementById("pairdiv");
+    if (config.uses_ble == "yes") {
+      blebtn.style.display = "block";
+    }
+    else {
+      blebtn.style.display = "none";
+    }
   }});
 }
 
