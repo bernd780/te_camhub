@@ -325,6 +325,13 @@ video {
     "mapview mapview infoview infoview";
 }
 
+.videoholder.layout6 {
+  grid-template-areas:
+    "mapview frontview infoview"
+    "leftpillarview . rightpillarview"
+    "leftrepeaterview backview rightrepeaterview";
+}
+
 .videogriditem {
   min-width: 0;
   max-width: 100%;
@@ -335,12 +342,21 @@ video {
   grid-area: leftrepeaterview;
 }
 
+.leftpillarview {
+  grid-area: leftpillarview;
+}
+
+
 .frontview {
   grid-area: frontview;
 }
 
 .rightrepeaterview {
   grid-area: rightrepeaterview;
+}
+
+.rightpillarview {
+  grid-area: rightpillarview;
 }
 
 .mapview {
@@ -917,6 +933,7 @@ video {
             <div class="dropdownitem layoutitem" onclick="setLayout(3)">Side and rear on bottom, looking back</div>
             <div class="dropdownitem layoutitem" onclick="setLayout(4)">Mobile layout,<br>mirrored</div>
             <div class="dropdownitem layoutitem" onclick="setLayout(5)">Mobile layout,<br>looking back</div>
+            <div class="dropdownitem layoutitem" onclick="setLayout(6)">map, info on top,pillar and repeater cams on the side, mirrored back</div>
           </div>
         </div>
       </div>
@@ -924,13 +941,19 @@ video {
         <div class="videoholder layout3">
           <video disableRemotePlayback playsinline id="leftrepeaterview" class="videogriditem leftrepeaterview" style="z-index:1;"></video>
           <canvas id="leftrepeaterviewfreeze" class="videogriditem leftrepeaterview"  style="z-index:0;"></canvas>
+          
+          <video disableRemotePlayback playsinline id="leftpillarview" class="videogriditem leftpillarview" style="z-index:1;"></video>
+          <canvas id="leftpillarviewfreeze" class="videogriditem leftpillarview"  style="z-index:0;"></canvas>
 
           <video disableRemotePlayback playsinline id="frontview" class="videogriditem frontview" style="z-index:1;"></video>
           <canvas id="frontviewfreeze" class="videogriditem frontview" style="z-index:0;"></canvas>
 
           <video disableRemotePlayback playsinline id="rightrepeaterview" class="videogriditem rightrepeaterview" style="z-index:1;"></video>
           <canvas id="rightrepeaterviewfreeze" class="videogriditem rightrepeaterview" style="z-index:0;"></canvas>
-
+          
+          <video disableRemotePlayback playsinline id="rightpillarview" class="videogriditem rightpillarview" style="z-index:1;"></video>
+          <canvas id="rightpillarviewfreeze" class="videogriditem rightpillarview" style="z-index:0;"></canvas>
+          
           <div class="videogriditem mapview" style="margin:0px;z-index:0;">
             <iframe id="sentrymap"></iframe>
           </div>
@@ -1068,7 +1091,9 @@ var currentLayout = 1;
 
 function setLayout(layout) {
   var leftrepeaterview = document.getElementById("leftrepeaterview");
+  var leftpillarview = document.getElementById("leftpillarview");
   var rightrepeaterview = document.getElementById("rightrepeaterview");
+  var rightpillarview = document.getElementById("rightpillarview");
   var backview = document.getElementById("backview");
   var videogrid = document.querySelector(".videoholder");
   if (layout == 1) {
@@ -1095,6 +1120,12 @@ function setLayout(layout) {
     rightrepeaterview.classList.remove("flipped");
     backview.classList.remove("flipped");
     videogrid.classList="videoholder layout5";
+  } else if (layout == 6) {
+    // map-front-info on top, mirrored back 
+    //leftrepeaterview.classList.add("flipped");
+    //rightrepeaterview.classList.add("flipped");
+    backview.classList.add("flipped");
+    videogrid.classList="videoholder layout6";
   } else {
     layout = 3;
     // (default) map-front-info on top, right-rear-left on bottom
@@ -1857,6 +1888,8 @@ class VideoSegment {
   front;
   leftrepeater;
   rightrepeater;
+  leftpillar;
+  rightpillar;
   back;
   datetime;
   numangles;
@@ -1895,6 +1928,10 @@ class VideoSegment {
       this.leftrepeater=path;
     } else if (path.includes('right_repeater')) {
       this.rightrepeater=path;
+    } else if (path.includes('left_pillar')) {
+      this.leftpillar=path;
+    } else if (path.includes('right_pillar')) {
+      this.rightpillar=path;
     } else if (path.includes('back')) {
       this.back=path;
     } else {
@@ -2012,24 +2049,34 @@ class VideoSegment {
     } else {
       videoelems[0].removeAttribute('src');
     }
-    if (this.front != undefined) {
-      videoelems[1].src = cachebustingurl(prefix + this.front);
+    if (this.leftpillar != undefined) {
+      videoelems[1].src = cachebustingurl(prefix + this.leftpillar);
     } else {
       videoelems[1].removeAttribute('src');
     }
-    if (this.rightrepeater != undefined) {
-      videoelems[2].src = cachebustingurl(prefix + this.rightrepeater);
+    if (this.front != undefined) {
+      videoelems[2].src = cachebustingurl(prefix + this.front);
     } else {
       videoelems[2].removeAttribute('src');
     }
-    if (this.back != undefined) {
-      videoelems[3].src = cachebustingurl(prefix + this.back);
+    if (this.rightrepeater != undefined) {
+      videoelems[3].src = cachebustingurl(prefix + this.rightrepeater);
     } else {
       videoelems[3].removeAttribute('src');
     }
-
+    if (this.rightpillar != undefined) {
+      videoelems[4].src = cachebustingurl(prefix + this.rightpillar);
+    } else {
+      videoelems[4].removeAttribute('src');
+    }
+    if (this.back != undefined) {
+      videoelems[5].src = cachebustingurl(prefix + this.back);
+    } else {
+      videoelems[5].removeAttribute('src');
+    }
+    
     this.numangles = 0;
-    for (var i=0; i < 4;i++) {
+    for (var i=0; i < 6;i++) {
       var v = videoelems[i];
       v.ontimeupdate = undefined;
       v.onended = undefined;
@@ -2048,7 +2095,7 @@ class VideoSegment {
     }
     log("angles: " + this.numangles);
 
-    for (var n of [this.leftrepeater, this.rightrepeater, this.front, this.back]) {
+    for (var n of [this.leftrepeater,this.leftpillar, this.rightrepeater,this.rightpillar, this.front, this.back]) {
       if (n != undefined) {
         showCurrentSegment(n.substring(0, 19));
         break;
@@ -2482,20 +2529,24 @@ var currentsequence;
 
 var videoelems = [
   document.getElementById('leftrepeaterview'),
+  document.getElementById('leftpillarview'),
   document.getElementById('frontview'),
   document.getElementById('rightrepeaterview'),
+  document.getElementById('rightpillarview'),
   document.getElementById('backview')
 ];
 
 var canvaselems = [
   document.getElementById('leftrepeaterviewfreeze'),
+  document.getElementById('leftpillarviewfreeze'),
   document.getElementById('frontviewfreeze'),
   document.getElementById('rightrepeaterviewfreeze'),
+  document.getElementById('rightpillarviewfreeze'),
   document.getElementById('backviewfreeze')
 ];
 
 function freezeVideoElems() {
-  for (var i=0; i < 4;i++) {
+  for (var i=0; i < 6;i++) {
     var v = videoelems[i];
     var c = canvaselems[i];
     v.teslausbcanvaslayer = c;
@@ -2513,7 +2564,7 @@ function freezeVideoElems() {
 }
 
 function unfreezeVideoElems() {
-  for (var i=0; i < 4;i++) {
+  for (var i=0; i < 6;i++) {
     var v = videoelems[i];
     if (v.src != undefined && v.src != '') {
       v.style.visibility="inherit";
