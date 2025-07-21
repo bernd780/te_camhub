@@ -268,8 +268,8 @@ export CAM_SIZE=40G
 # Other ways to keep the USB ports powered for TeslaUSB to finish archiving
 # involve manually turning on Sentry Mode or Camp Mode from the Tesla App.
 # However, neither are great solutions as they keep the car on indefinitely,
-# thus unnecessarily consuming the car’s high-voltage battery. For that reason,
-# it’s a good idea to setup notification mechanisms (see preceding sections) so
+# thus unnecessarily consuming the car's high-voltage battery. For that reason,
+# it's a good idea to setup notification mechanisms (see preceding sections) so
 # you know when to manually turn Off Sentry/Camp Mode from the Tesla App.
 #
 # Another alternative is using a power bank or UPS hat to keep TeslaUSB powered
