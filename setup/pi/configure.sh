@@ -193,6 +193,11 @@ function check_at_most_one_wake_api () {
 function check_teslafi_api () {
   if [[ ( -n "${TESLAFI_API_TOKEN:+x}" ) ]]
   then
+    if [[ "$SENTRY_CASE" != 1 && "$SENTRY_CASE" != 2 ]]; then
+      log_progress "STOP: invalid SENTRY_CASE for Tesla API."
+      return 1
+    fi
+
     if ! command -v jq &>/dev/null
       then
         log_progress "Installing required package for TeslaFi API: jq"
@@ -207,6 +212,11 @@ function check_teslafi_api () {
 function check_tessie_api () {
   if [[ ( -n "${TESSIE_API_TOKEN:+x}" ) ]]
   then
+    if [[ "$SENTRY_CASE" != 1 && "$SENTRY_CASE" != 2 && "$SENTRY_CASE" != 3 ]]; then
+      log_progress "STOP: invalid SENTRY_CASE for Tessie API."
+      return 1
+    fi
+    
     if [[ ( -z "${TESSIE_VIN:+x}" ) ]]
     then
       log_progress "STOP: Tessie API requires the VIN number to be provided."
@@ -229,6 +239,11 @@ function check_and_configure_tesla_ble () {
   local install_path="$1"
   if [[ ( -n "${TESLA_BLE_VIN:+x}" ) ]]
   then
+    if [[ "$SENTRY_CASE" != 1 && "$SENTRY_CASE" != 2 && "$SENTRY_CASE" != 3 ]]; then
+      log_progress "STOP: invalid SENTRY_CASE for Tesla BLE API."
+      return 1
+    fi
+    
     if dpkg-query -W --showformat='${db:Status-Status}\n' "bluez" 2>/dev/null | grep -q '^installed$'
     then
       echo "Skipping required package for Tesla BLE API: bluez already installed."

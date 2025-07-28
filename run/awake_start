@@ -18,7 +18,6 @@ else
           -H "User-Agent: github.com/marcone/teslausb" \
           "https://api.tessie.com/$TESSIE_VIN/command/close_charge_port")
 
-        log "Tessie: Nudging the car."
         # Extract HTTP status code
         http_status="${http_response: -3}"
         
@@ -41,30 +40,25 @@ else
       fi
 
       if [[ -n "${TESLA_BLE_VIN:+x}" ]]
-      # Use Tesla BLE API to nudge the car
+      # use Tesla BLE API to nudge the car
       then
-        if BLE_response=$(/root/bin/tesla-control -ble -key-file /root/.ble/key_private.pem -vin "${TESLA_BLE_VIN^^}" charge-port-close 2>&1)
+        if ! BLE_response=$(/root/bin/tesla-control -ble -key-file /root/.ble/key_private.pem -vin "${TESLA_BLE_VIN^^}" charge-port-close 2>&1)
         then
-          # BLE success
-          log "Tesla BLE: Successfully nudged the car to stay awake."
-
-        elif [[ ( "$BLE_response" == *"already closed"* ) || ( "$BLE_response" == *"cable connected"* ) ]]
-          # Acceptable false-negative BLE responses
+          # check false-negative BLE responses
+          if [[ ( "$BLE_response" != *"already closed"* ) && ( "$BLE_response" != *"cable connected"* ) ]]
           then
-          log "Tesla BLE: Successfully nudged the car to stay awake."
-        
-        else  
-          # Log error and retry
-          log "Tesla BLE: Failed to nudge the car. There may be an issue with the BLE communication."
-          if [ "$retry" -lt "3" ]
-          then
-            log "Tesla BLE: Retrying after 30s in case the connection was poor."
-            retry=$((retry+1))
-            sleep 30
-            continue
-          else
-            log "Tesla BLE: $BLE_response"
-            break
+            # log error and retry
+            log "Tesla BLE: Failed to nudge the car. There may be an issue with the BLE communication."
+            if [ "$retry" -lt "3" ]
+            then
+              log "Tesla BLE: Retrying after 30s in case the connection was poor."
+              retry=$((retry+1))
+              sleep 30
+              continue
+            else
+              log "Tesla BLE: $BLE_response"
+              break
+            fi
           fi
         fi
       fi
@@ -73,12 +67,6 @@ else
       retry=1
     done
   }
-
-  if [[ -z "${SENTRY_CASE:+x}" && -n "${TESLA_BLE_VIN:+x}" ]]
-  then
-    # If BLE Sentry unset, can assume mode 3 
-    SENTRY_CASE=3
-  fi
 
   case "${SENTRY_CASE}" in
     1)
