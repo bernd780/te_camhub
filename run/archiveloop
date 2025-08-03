@@ -163,20 +163,6 @@ function retry () {
   return
 }
 
-function mount_mountpoint () {
-  local mount_point="$1"
-  log "Mounting $mount_point..."
-
-  if timeout 10 mount "$mount_point" >> "$LOG_FILE" 2>&1
-  then
-    log "Mounted $mount_point."
-    return 0
-  else
-    log "Failed to mount $mount_point."
-    return 1
-  fi
-}
-
 function ensure_mountpoint_is_mounted () {
   local mount_point="$1"
 
@@ -184,7 +170,13 @@ function ensure_mountpoint_is_mounted () {
   then
     log "$mount_point is already mounted."
   else
-    mount_mountpoint "$mount_point"
+    if timeout 10 mount "$mount_point" >> "$LOG_FILE" 2>&1
+    then
+      log "Mounted $mount_point."
+    else
+      log "Failed to mount $mount_point."
+      return 1
+    fi
   fi
 }
 
