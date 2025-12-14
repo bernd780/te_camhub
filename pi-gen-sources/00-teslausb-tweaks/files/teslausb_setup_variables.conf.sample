@@ -17,7 +17,7 @@ export SSID='your_ssid'
 export WIFIPASS='your_pass'
 
 # Variables for CIFS (Windows/Mac file sharing) archiving.
-# If you want to use rsync or rclone, delete or comment out this section
+# If you want to use rsync, rclone, or NFS, delete or comment out this section
 # and uncomment the rsync or rclone section below.
 export ARCHIVE_SYSTEM=cifs
 export ARCHIVE_SERVER=your_archive_name_or_ip
@@ -47,6 +47,12 @@ export SHARE_PASSWORD='password'
 #export RCLONE_PATH="remotepathname"
 # The following is optional
 #export RCLONE_FLAGS=()
+
+# Variables for NFS archiving
+# Note: SHARE_NAME must be the exact export path on the NAS (e.g. /volume1/TeslaCam)
+#export ARCHIVE_SYSTEM=nfs
+#export ARCHIVE_SERVER=hostname_or_ip
+#export SHARE_NAME='/volume1/TeslaCam'
 
 # The DATA_DRIVE option (formerly USB_DRIVE) is used to specify that you want
 # to store recordings on a different drive than the boot drive. If you don't

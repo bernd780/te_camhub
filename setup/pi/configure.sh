@@ -139,6 +139,14 @@ function check_archive_configs () {
             check_variable "ARCHIVE_SERVER"
             check_rsync
             ;;
+         nfs)
+            if [ -e /backingfiles/cam_disk.bin ]
+            then
+              check_variable "SHARE_NAME"
+            fi
+            check_variable "ARCHIVE_SERVER"
+            check_rsync
+            ;;
         none)
             export ARCHIVE_SERVER=localhost
             ;;
@@ -162,6 +170,9 @@ function get_archive_module () {
             ;;
         cifs)
             echo "run/cifs_archive"
+            ;;
+         nfs)
+            echo "run/nfs_archive"
             ;;
         none)
             echo "run/none_archive"
@@ -365,7 +376,7 @@ function install_archive_scripts () {
   copy_script "$archive_module"/connect-archive.sh "$install_path"
   copy_script "$archive_module"/disconnect-archive.sh "$install_path"
   copy_script "$archive_module"/archive-is-reachable.sh "$install_path"
-  if [ -n "${MUSIC_SHARE_NAME:+x}" ] && grep cifs <<< "$archive_module"
+  if [ -n "${MUSIC_SHARE_NAME:+x}" ] && grep -E "cifs|nfs" <<< "$archive_module"
   then
     copy_script "$archive_module"/copy-music.sh "$install_path"
   fi
