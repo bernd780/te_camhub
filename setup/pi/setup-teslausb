@@ -12,6 +12,12 @@ then
   exit 1
 fi
 
+if [ "$(. /etc/os-release && echo "${VERSION_ID:-}")" = "10" ]
+then
+  echo "Updating apt sources for legacy Buster (consider using a more recent image)"
+  sed -i 's|raspbian.raspberrypi.org|legacy.raspbian.org|g' /etc/apt/sources.list
+fi
+
 if [ "${FLOCKED:-}" != "$0" ]
 then
   if FLOCKED="$0" flock -en -E 99 "$0" "$0" "$@" || case "$?" in
