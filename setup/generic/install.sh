@@ -178,7 +178,7 @@ then
   apt install -y dos2unix
 fi
 
-if [ ! -x "$(command -v sntp)" ] && [ ! -x "$(command -v ntpdig)"
+if [ ! -x "$(command -v sntp)" ] && [ ! -x "$(command -v ntpdig)" ]
 then
   apt install -y sntp || apt install -y ntpsec-ntpdig
 fi
