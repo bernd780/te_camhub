@@ -1,7 +1,7 @@
 [Unit]
 Description=Te_FITI-derived local decryptor + viewer for teslausb
 After=network-online.target teslacam-latest-snapshot.service
-Wants=teslacam-latest-snapshot.service
+Requires=teslacam-latest-snapshot.service
 
 [Service]
 Type=simple
