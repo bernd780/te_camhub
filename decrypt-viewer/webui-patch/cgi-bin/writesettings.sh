@@ -1,0 +1,117 @@
+#!/bin/bash
+# Writes selected variables to /root/teslausb_setup_variables.conf from the
+# "Einstellungen" tab. Only an allowlisted set of variable names may be
+# written; every value is single-quote-escaped so the resulting
+# `export VAR='...'` line is safe to source (no shell injection).
+
+CONF=/root/teslausb_setup_variables.conf
+
+fail() {
+  printf 'HTTP/1.0 200 OK\r\nContent-type: application/json\r\n\r\n{"ok":false,"error":"%s"}\n' "$1"
+  exit 0
+}
+
+# Read the POST body (application/x-www-form-urlencoded).
+BODY=""
+if [ "${REQUEST_METHOD:-}" = "POST" ] && [ -n "${CONTENT_LENGTH:-}" ]; then
+  BODY=$(head -c "$CONTENT_LENGTH")
+fi
+[ -n "$BODY" ] || fail "empty body"
+
+# urldecode: '+' -> space, %XX -> byte.
+urldecode() {
+  local s=${1//+/ }
+  printf '%b' "${s//%/\\x}"
+}
+
+# Parse key=value pairs into an associative array.
+declare -A P
+IFS='&' read -r -a PAIRS <<<"$BODY"
+for kv in "${PAIRS[@]}"; do
+  k=${kv%%=*}
+  v=${kv#*=}
+  [ "$k" = "$kv" ] && v=""
+  P["$(urldecode "$k")"]="$(urldecode "$v")"
+done
+
+# Map of form field -> conf variable name (allowlist). Anything not here is
+# ignored, so the browser can never write an arbitrary variable/line.
+declare -A MAP=(
+  [archive_server]=ARCHIVE_SERVER
+  [share_name]=SHARE_NAME
+  [share_user]=SHARE_USER
+  [share_password]=SHARE_PASSWORD
+  [archive_recentclips]=ARCHIVE_RECENTCLIPS
+  [archive_savedclips]=ARCHIVE_SAVEDCLIPS
+  [archive_sentryclips]=ARCHIVE_SENTRYCLIPS
+  [archive_trackmodeclips]=ARCHIVE_TRACKMODECLIPS
+  [ssid]=SSID
+  [wifipass]=WIFIPASS
+  [time_zone]=TIME_ZONE
+  [snapshot_interval]=SNAPSHOT_INTERVAL
+  [archive_delay]=ARCHIVE_DELAY
+)
+BOOLS=" archive_recentclips archive_savedclips archive_sentryclips archive_trackmodeclips "
+INTS=" snapshot_interval archive_delay "
+PASSWORDS=" share_password wifipass "
+
+# Build the list of "VAR<TAB>escaped-value" updates to apply.
+declare -a UPDATES
+for field in "${!MAP[@]}"; do
+  var=${MAP[$field]}
+
+  # password fields: only write when a (non-empty) new value was provided
+  if [[ "$PASSWORDS" == *" $field "* ]]; then
+    [ -n "${P[$field]:-}" ] || continue
+  fi
+
+  # field entirely absent from the POST -> leave conf untouched
+  # (checkboxes always submit true/false from the form, so they're present)
+  [ -v "P[$field]" ] || continue
+  val=${P[$field]}
+
+  if [[ "$BOOLS" == *" $field "* ]]; then
+    if [ "$val" = "true" ] || [ "$val" = "1" ] || [ "$val" = "on" ]; then val=true; else val=false; fi
+  elif [[ "$INTS" == *" $field "* ]]; then
+    [[ "$val" =~ ^[0-9]+$ ]] || fail "$field must be a whole number"
+  fi
+
+  # single-quote escape: ' -> '\''
+  esc=${val//\'/\'\\\'\'}
+  UPDATES+=("$var"$'\t'"'$esc'")
+done
+
+[ ${#UPDATES[@]} -gt 0 ] || fail "nothing to write"
+
+# Make root writable, back up, apply each update (replace existing export line
+# or append), then remount read-only again.
+sudo mount / -o remount,rw || fail "remount rw failed"
+sudo cp "$CONF" "$CONF.web.bak" 2>/dev/null
+
+for u in "${UPDATES[@]}"; do
+  var=${u%%$'\t'*}
+  quoted=${u#*$'\t'}
+  newline="export $var=$quoted"
+  if sudo grep -q "^export $var=" "$CONF"; then
+    # replace the line; write via a temp file to avoid sed-escaping the value
+    sudo bash -c '
+      conf="$1"; var="$2"; newline="$3"
+      tmp=$(mktemp)
+      while IFS= read -r l || [ -n "$l" ]; do
+        case "$l" in
+          "export $var="*) printf "%s\n" "$newline" ;;
+          *) printf "%s\n" "$l" ;;
+        esac
+      done < "$conf" > "$tmp"
+      cat "$tmp" > "$conf"
+      rm -f "$tmp"
+    ' _ "$CONF" "$var" "$newline"
+  else
+    printf '%s\n' "$newline" | sudo tee -a "$CONF" >/dev/null
+  fi
+done
+
+sync
+sudo mount / -o remount,ro 2>/dev/null   # may report "busy"; harmless
+
+printf 'HTTP/1.0 200 OK\r\nContent-type: application/json\r\n\r\n{"ok":true}\n'

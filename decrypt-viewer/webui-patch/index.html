@@ -214,7 +214,8 @@ iframe {
 #tab4:checked ~ .tab.content4,
 #tab5:checked ~ .tab.content5,
 #tab6:checked ~ .tab.content6,
-#tab7:checked ~ .tab.content7 {
+#tab7:checked ~ .tab.content7,
+#tab8:checked ~ .tab.content8 {
   visibility: visible;
 }
 
@@ -231,7 +232,8 @@ iframe {
   #tab4:checked ~ .tabheaderholder .tablabel4,
   #tab5:checked ~ .tabheaderholder .tablabel5,
   #tab6:checked ~ .tabheaderholder .tablabel6,
-  #tab7:checked ~ .tabheaderholder .tablabel7 {
+  #tab7:checked ~ .tabheaderholder .tablabel7,
+  #tab8:checked ~ .tabheaderholder .tablabel8 {
     border-bottom: 3px solid red;
     color: #000;
     z-index:11;
@@ -817,6 +819,7 @@ video {
   <input class="tabradiobtn" type="radio" name="tabs" id="tab5">
   <input class="tabradiobtn" type="radio" name="tabs" id="tab6">
   <input class="tabradiobtn" type="radio" name="tabs" id="tab7" checked>
+  <input class="tabradiobtn" type="radio" name="tabs" id="tab8">
   <div class="tabheaderholder">
     <label for="tab1" class="tablabel tablabel1">Diagnostics</label>
     <label for="tab2" class="tablabel tablabel2">Archiveloop log</label>
@@ -825,6 +828,7 @@ video {
     <label for="tab5" class="tablabel tablabel5">Recordings</label>
     <label for="tab6" class="tablabel tablabel6">Files</label>
     <label for="tab7" class="tablabel tablabel7">Viewer</label>
+    <label for="tab8" class="tablabel tablabel8">Einstellungen</label>
 
     <div class="stretchable"></div>
 
@@ -1044,6 +1048,130 @@ video {
       </div>
     </div>
   </div>
+
+  <div class="tab content8">
+    <div style="max-width:640px;padding:16px 20px;overflow:auto;height:calc(100% - 4px);box-sizing:border-box;color:#111;">
+      <form id="cfgform" onsubmit="return false;" style="font-size:15px;">
+        <h3 style="margin:6px 0 4px;">NAS / Archiv</h3>
+        <label style="display:block;margin:8px 0;">Archiv-Server (NAS-IP)<br>
+          <input type="text" id="cfg_archive_server" style="width:100%;padding:6px;box-sizing:border-box;"></label>
+        <label style="display:block;margin:8px 0;">Share + Pfad<br>
+          <input type="text" id="cfg_share_name" style="width:100%;padding:6px;box-sizing:border-box;"></label>
+        <label style="display:block;margin:8px 0;">Benutzer<br>
+          <input type="text" id="cfg_share_user" style="width:100%;padding:6px;box-sizing:border-box;"></label>
+        <label style="display:block;margin:8px 0;">Passwort<br>
+          <input type="password" id="cfg_share_password" autocomplete="new-password" style="width:100%;padding:6px;box-sizing:border-box;"></label>
+        <div style="margin:10px 0;">
+          <label style="display:block;"><input type="checkbox" id="cfg_archive_recentclips"> RecentClips archivieren</label>
+          <label style="display:block;"><input type="checkbox" id="cfg_archive_savedclips"> SavedClips archivieren</label>
+          <label style="display:block;"><input type="checkbox" id="cfg_archive_sentryclips"> SentryClips archivieren</label>
+          <label style="display:block;"><input type="checkbox" id="cfg_archive_trackmodeclips"> TrackMode-Clips archivieren</label>
+        </div>
+
+        <h3 style="margin:18px 0 4px;">Netzwerk</h3>
+        <label style="display:block;margin:8px 0;">WLAN-SSID<br>
+          <input type="text" id="cfg_ssid" style="width:100%;padding:6px;box-sizing:border-box;"></label>
+        <label style="display:block;margin:8px 0;">WLAN-Passwort<br>
+          <input type="password" id="cfg_wifipass" autocomplete="new-password" style="width:100%;padding:6px;box-sizing:border-box;"></label>
+
+        <h3 style="margin:18px 0 4px;">System</h3>
+        <label style="display:block;margin:8px 0;">Zeitzone<br>
+          <input type="text" id="cfg_time_zone" placeholder="Europe/Berlin" style="width:100%;padding:6px;box-sizing:border-box;"></label>
+        <label style="display:block;margin:8px 0;">Snapshot-Intervall (Sekunden)<br>
+          <input type="number" min="0" id="cfg_snapshot_interval" style="width:100%;padding:6px;box-sizing:border-box;"></label>
+        <label style="display:block;margin:8px 0;">Archiv-Verz&ouml;gerung (Sekunden)<br>
+          <input type="number" min="0" id="cfg_archive_delay" style="width:100%;padding:6px;box-sizing:border-box;"></label>
+
+        <div style="margin-top:18px;">
+          <button type="button" id="cfg_save" style="padding:8px 18px;">Speichern</button>
+          <span id="cfg_status" style="margin-left:12px;"></span>
+        </div>
+      </form>
+    </div>
+    <script>
+    // Self-contained: a failure here must not break the rest of the page's
+    // inline script (lesson from the Viewer-tab episode).
+    (function () {
+      var PW_PLACEHOLDER = "•••• unverändert";
+      function $(id) { return document.getElementById(id); }
+      function bool(v) { return v === "true" || v === "1" || v === "on"; }
+
+      function load() {
+        var x = new XMLHttpRequest();
+        x.open("GET", "cgi-bin/readsettings.sh?_=" + Date.now());
+        x.onload = function () {
+          if (x.status !== 200) { $("cfg_status").textContent = "Laden fehlgeschlagen"; return; }
+          var c;
+          try { c = JSON.parse(x.responseText); } catch (e) { $("cfg_status").textContent = "Antwort ungültig"; return; }
+          $("cfg_archive_server").value = c.archive_server || "";
+          $("cfg_share_name").value = c.share_name || "";
+          $("cfg_share_user").value = c.share_user || "";
+          $("cfg_ssid").value = c.ssid || "";
+          $("cfg_time_zone").value = c.time_zone || "";
+          $("cfg_snapshot_interval").value = c.snapshot_interval || "";
+          $("cfg_archive_delay").value = c.archive_delay || "";
+          $("cfg_archive_recentclips").checked = bool(c.archive_recentclips);
+          $("cfg_archive_savedclips").checked = bool(c.archive_savedclips);
+          $("cfg_archive_sentryclips").checked = bool(c.archive_sentryclips);
+          $("cfg_archive_trackmodeclips").checked = bool(c.archive_trackmodeclips);
+          $("cfg_share_password").placeholder = c.share_password_set ? PW_PLACEHOLDER : "";
+          $("cfg_wifipass").placeholder = c.wifipass_set ? PW_PLACEHOLDER : "";
+        };
+        x.onerror = function () { $("cfg_status").textContent = "Verbindungsfehler"; };
+        x.send();
+      }
+
+      function save() {
+        var p = [];
+        function add(k, v) { p.push(encodeURIComponent(k) + "=" + encodeURIComponent(v)); }
+        add("archive_server", $("cfg_archive_server").value);
+        add("share_name", $("cfg_share_name").value);
+        add("share_user", $("cfg_share_user").value);
+        add("ssid", $("cfg_ssid").value);
+        add("time_zone", $("cfg_time_zone").value);
+        add("snapshot_interval", $("cfg_snapshot_interval").value);
+        add("archive_delay", $("cfg_archive_delay").value);
+        add("archive_recentclips", $("cfg_archive_recentclips").checked);
+        add("archive_savedclips", $("cfg_archive_savedclips").checked);
+        add("archive_sentryclips", $("cfg_archive_sentryclips").checked);
+        add("archive_trackmodeclips", $("cfg_archive_trackmodeclips").checked);
+        // passwords only when the user typed something
+        if ($("cfg_share_password").value) add("share_password", $("cfg_share_password").value);
+        if ($("cfg_wifipass").value) add("wifipass", $("cfg_wifipass").value);
+
+        $("cfg_status").textContent = "Speichern…";
+        var x = new XMLHttpRequest();
+        x.open("POST", "cgi-bin/writesettings.sh");
+        x.setRequestHeader("Content-Type", "application/x-www-form-urlencoded");
+        x.onload = function () {
+          var r = {};
+          try { r = JSON.parse(x.responseText); } catch (e) {}
+          if (x.status === 200 && r.ok) {
+            $("cfg_share_password").value = "";
+            $("cfg_wifipass").value = "";
+            $("cfg_status").textContent = "Gespeichert.";
+            if (confirm("Gespeichert. Änderungen am Archiv wirken erst nach einem Neustart des Archiv-Dienstes.\n\nJetzt neu starten?")) {
+              $("cfg_status").textContent = "Starte neu…";
+              var r2 = new XMLHttpRequest();
+              r2.open("POST", "cgi-bin/restart-archiveloop.sh");
+              r2.onload = function () { $("cfg_status").textContent = "Neu gestartet."; setTimeout(load, 1500); };
+              r2.onerror = function () { $("cfg_status").textContent = "Neustart-Fehler"; };
+              r2.send();
+            }
+          } else {
+            $("cfg_status").textContent = "Fehler: " + (r.error || ("HTTP " + x.status));
+          }
+        };
+        x.onerror = function () { $("cfg_status").textContent = "Verbindungsfehler"; };
+        x.send(p.join("&"));
+      }
+
+      $("cfg_save").addEventListener("click", save);
+      load();
+    })();
+    </script>
+  </div>
+
   <div id="settingsoverlay" class="modaloverlay">
     <div class="modalcontent" style="max-width:500px">
       <div style="margin-bottom:10px">

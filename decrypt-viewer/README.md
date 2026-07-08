@@ -55,5 +55,35 @@ To embed the viewer into teslausb's own "Viewer" tab (optional, done via
 sudo /root/bin/remountfs_rw
 sudo cp /var/www/html/index.html /var/www/html/index.html.bak
 sudo cp webui-patch/index.html /var/www/html/index.html
+sudo cp webui-patch/cgi-bin/*.sh /var/www/html/cgi-bin/ && sudo chmod +x /var/www/html/cgi-bin/*.sh
 sudo reboot   # remounting root back to ro live tends to report "busy"
 ```
+
+## "Einstellungen" tab (config editor)
+
+`webui-patch/index.html` also adds an eighth tab, **Einstellungen**, that edits
+the most common values in `/root/teslausb_setup_variables.conf` from the
+browser (NAS/archive: server, share, user, password, per-clip-type archiving;
+network: SSID + WiFi password; system: timezone, snapshot interval, archive
+delay). Backed by three CGI scripts in `webui-patch/cgi-bin/`:
+
+- `readsettings.sh` — conf → JSON. **Passwords are never returned in clear**;
+  only `*_set` booleans, so the field shows a "unverändert" placeholder.
+- `writesettings.sh` — urlencoded POST → conf. **Allowlisted** variable names
+  only; every value is single-quote-escaped (`'` → `'\''`) so the resulting
+  `export VAR='...'` line stays safe to `source` (no shell injection); bools
+  normalized to `true`/`false`, ints validated; password fields written only
+  when a new value is supplied. Remounts `/` rw, backs up to `conf.web.bak`,
+  replaces-or-appends each `export` line, remounts ro.
+- `restart-archiveloop.sh` — `systemctl restart teslausb` so archive changes
+  take effect without a full reboot. The Save button offers this via a confirm
+  dialog ("Jetzt neu starten?").
+
+The tab's JS lives in a **self-contained `<script>` inside the `content8`
+div** (same reasoning as the hidden-player note above: an error there must not
+take down the rest of teslausb's inline script).
+
+**Security (status quo):** the teslausb web UI has no auth (`auth_basic off`),
+so anyone on the LAN can set — but not read — the NAS/WiFi passwords via this
+tab. That matches the existing exposure of the stock cgi-bin scripts
+(`reboot.sh`, `rm.sh`, …). Add `.htpasswd` if that matters to you.
