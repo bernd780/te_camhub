@@ -947,15 +947,102 @@ video {
   </div>
 
   <div class="tab content7">
-    <!-- Replaced teslausb's built-in (encryption-unaware) player with the
-         Te_FITI viewer, which handles decrypted+encrypted clips, thumbnails,
-         GPS heatmap and trips. Runs as its own service on :8099. -->
-    <iframe id="tefitiviewer" style="width:100%;height:100%;border:0;background:#333;"
+    <!-- Te_FITI viewer (decrypt-viewer service on :8099), replacing teslausb's
+         built-in player visually. The original player markup below is kept
+         in the DOM (just hidden) instead of removed, because teslausb's own
+         script.js references its element IDs unconditionally at load time
+         (showcontrols(), setLayout(), ResizeObserver on #sentrymap/#tickmarkscanvas,
+         the videolist.sh callback populating the RecentClips/SavedClips/SentryClips
+         dropdowns) — deleting the markup outright throws TypeErrors there and
+         breaks unrelated page logic (e.g. the tab-label visibility code that
+         runs later in the same script). -->
+    <iframe id="tefitiviewer" style="width:100%;height:100%;border:0;background:#333;position:absolute;top:0;left:0;z-index:10;"
             src="about:blank"></iframe>
     <script>
       document.getElementById("tefitiviewer").src =
         "http://" + window.location.hostname + ":8099/";
     </script>
+    <div class="videoholderparent" style="width:100%;height:100%;background:#333;display:none;" onmousemove="showcontrols()">
+      <div class="navbar">
+        <div class="noclips">Loading...</div>
+        <div class="subnav">RecentClips
+          <div id="RecentClips" class="subnav-content"></div>
+        </div>
+        <div class="subnav">SavedClips
+          <div id="SavedClips" class="subnav-content"></div>
+        </div>
+        <div class="subnav">SentryClips
+          <div id="SentryClips" class="subnav-content"></div>
+        </div>
+
+        <div class="subnav layoutbtn" style="float:right;">
+          <svg class="layoutsvg" width="52" height="26" viewBox="0 0 26 13">
+            <path d="M 2 6 L 8 6 L 8 2 L 2 2 z M 10 6 L 16 6 L 16 2 L 10 2 z M 18 6 L 24 6 L 24 2 L 18 2 z M 2 12 L 8 12 L 8 8 L 2 8 z M 10 12 L 16 12 L 16 8 L 10 8 z M 18 12 L 24 12 L 24 8 L 18 8 z"/>
+          </svg>
+          <div id="layouts" class="subnav-content">
+            <div class="dropdownitem layoutitem" onclick="setLayout(1)">Sides on top, rear on bottom, mirrored</div>
+            <div class="dropdownitem layoutitem" onclick="setLayout(2)">Side and rear on bottom, mirrored</div>
+            <div class="dropdownitem layoutitem" onclick="setLayout(3)">Side and rear on bottom, looking back</div>
+            <div class="dropdownitem layoutitem" onclick="setLayout(4)">Mobile layout,<br>mirrored</div>
+            <div class="dropdownitem layoutitem" onclick="setLayout(5)">Mobile layout,<br>looking back</div>
+            <div class="dropdownitem layoutitem pillar" onclick="setLayout(6)">Pillars on the side</div>
+          </div>
+        </div>
+      </div>
+      <div class="videoholder layout3">
+        <video disableRemotePlayback playsinline id="leftrepeaterview" class="videogriditem leftrepeaterview" style="z-index:1;"></video>
+        <canvas id="leftrepeaterviewfreeze" class="videogriditem leftrepeaterview"  style="z-index:0;"></canvas>
+
+        <video disableRemotePlayback playsinline id="leftpillarview" class="videogriditem leftpillarview" style="z-index:1;"></video>
+        <canvas id="leftpillarviewfreeze" class="videogriditem leftpillarview"  style="z-index:0;"></canvas>
+
+        <video disableRemotePlayback playsinline id="frontview" class="videogriditem frontview" style="z-index:1;"></video>
+        <canvas id="frontviewfreeze" class="videogriditem frontview" style="z-index:0;"></canvas>
+
+        <video disableRemotePlayback playsinline id="rightrepeaterview" class="videogriditem rightrepeaterview" style="z-index:1;"></video>
+        <canvas id="rightrepeaterviewfreeze" class="videogriditem rightrepeaterview" style="z-index:0;"></canvas>
+
+        <video disableRemotePlayback playsinline id="rightpillarview" class="videogriditem rightpillarview" style="z-index:1;"></video>
+        <canvas id="rightpillarviewfreeze" class="videogriditem rightpillarview" style="z-index:0;"></canvas>
+
+        <div class="videogriditem mapview" style="margin:0px;z-index:0;">
+          <iframe id="sentrymap"></iframe>
+        </div>
+
+        <video disableRemotePlayback playsinline id="backview" class="videogriditem backview" style="z-index:1;"></video>
+        <canvas id="backviewfreeze" class="videogriditem backview" style="z-index:0;"></canvas>
+
+        <div id="infoholder" class="videogriditem infoview" style="margin-left:12px;color:white;">
+          <div id="sequencelocation" style="margin-top:8px;margin-bottom:8px;"></div>
+          <div id="segmentname" style="margin-top:8px;margin-bottom:8px;"></div>
+          <div style="margin-top:8px;">
+            <span id="currenttime"></span><span id="totaltime"></span>
+            <div id="debuginfo" style="margin-top:20px;"></div>
+          </div>
+        </div>
+
+        <div id="videocontrols" >
+          <input type="range" class="slider" id="position" name="position"
+                 min="0" max="60" style="width:90%;max-width:600px;height:30px;z-index:2;"
+                 onmousemove="slidermousemove(event)">
+          <div class="sliderpositionbubble">00:00</div>
+          <div style="width:90%;max-width:600px;height:26px;margin-top:-24px;">
+            <canvas id="tickmarkscanvas" style="width:100%;height:100%;"></canvas>
+          </div>
+          <div class="buttoncontainer">
+            <button id="skipback" class="flatbutton skipback" onclick="skipBack()">
+              <svg class="mediabutton"><path d="M 19,28 A 10,10 0 1 0 9,18 M 8,18 10,18 9,20 z"></path></svg>
+            </button>
+            <button id="playpause" class="flatbutton play" onclick="startPlaying()">
+              <svg class="mediabutton"><path></path></svg>
+            </button>
+            <button id="skipforward" class="flatbutton skipforward" onclick="skipForward()">
+              <svg class="mediabutton"><path d="M 19,28 A 10,10 0 1 1 29,18 M 28,18 30,18 29,20 z"></path></svg>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
   <div id="settingsoverlay" class="modaloverlay">
     <div class="modalcontent" style="max-width:500px">

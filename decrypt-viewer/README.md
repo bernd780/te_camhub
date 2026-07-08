@@ -25,6 +25,18 @@ pipeline are needed beyond the `TeslaCam/EncryptedClips` path fix in
   A pristine copy of `/var/www/html/index.html.bak` is left on the Pi by
   the patch for easy diffing/reverting.
 
+  **Important:** the old player markup inside `content7` is *hidden*
+  (`display:none`), not deleted. teslausb's own inline script references
+  those element IDs unconditionally at load time — `showcontrols()`,
+  `setLayout()`, a `ResizeObserver` on `#sentrymap`/`#tickmarkscanvas`, and
+  the `videolist.sh` callback that populates the RecentClips/SavedClips/
+  SentryClips dropdowns. Deleting the markup throws `TypeError`s there,
+  which (since it's all one big `<script>` block) also stops the
+  *unrelated* code further down in the same block from running — including
+  the tab-label visibility logic, which is why an earlier attempt at this
+  patch made the Viewer/Recordings/Files tab labels disappear entirely.
+  Keep the old markup present-but-hidden if you ever regenerate this patch.
+
 ## Install
 
 ```
