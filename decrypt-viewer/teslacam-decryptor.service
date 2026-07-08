@@ -1,0 +1,20 @@
+[Unit]
+Description=Te_FITI-derived local decryptor + viewer for teslausb
+After=network-online.target teslacam-latest-snapshot.service
+Wants=teslacam-latest-snapshot.service
+
+[Service]
+Type=simple
+Environment=DATA_DIR=/backingfiles/decrypt-viewer-state
+ExecStartPre=/bin/mkdir -p /backingfiles/decrypt-viewer-state /backingfiles/decrypted
+ExecStart=/usr/bin/python3 /opt/teslacam-decryptor/app/server.py \
+  --scan /run/teslacam-latest/mnt/TeslaCam \
+  --src /run/teslacam-latest/mnt/TeslaCam/EncryptedClips \
+  --out /backingfiles/decrypted \
+  --port 8099 \
+  --interval 60
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

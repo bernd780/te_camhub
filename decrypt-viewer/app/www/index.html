@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Te_FITI</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<link rel="stylesheet" href="static/style.css">
+</head>
+<body>
+<header>
+  <h1>Te_FITI</h1>
+  <span id="status">⏳ loading…</span>
+  <button class="toolbtn" id="toolsbtn">🔑 Keys</button>
+  <button class="toolbtn" id="mapbtn" title="GPS map of all clips">🗺️ Map</button>
+</header>
+<main>
+  <aside id="sidebar">
+    <div id="mapFilterContainer">
+      <div id="mapFilterBar">
+        <button id="drawRectBtn" title="Draw rectangle to filter clips">▭ Select area</button>
+        <span class="hint" id="drawHint"></span>
+        <button id="filterResetBtn">↻ Reset</button>
+      </div>
+      <div id="mapFilter"></div>
+    </div>
+    <div id="filterbar">
+      <input type="text" id="search" placeholder="Filter: date/time…">
+      <label><input type="checkbox" id="filterDrive"> 📊 Driving</label>
+      <label><input type="checkbox" id="filterEvent"> 📅 Event</label>
+      <label><input type="checkbox" id="filterHonk"> 📯 Honk</label>
+    </div>
+    <div id="cliplist"></div>
+  </aside>
+  <section id="content">
+    <div id="meta"></div>
+    <div id="vctrl">
+      <span id="telctrl" style="display:none;align-items:center;gap:14px">
+        <label><input type="checkbox" id="t_hud" checked> HUD</label>
+        <label><input type="checkbox" id="t_nerd"> Nerd info</label>
+        <label><input type="checkbox" id="t_map"> 🗺️ Map</label>
+      </span>
+      <span id="telnone" style="display:none">— no telemetry in this clip</span>
+      <button class="vbtn" id="dlzip" title="Full clip (all cameras, decrypted) as ZIP">⬇ Clip (ZIP)</button>
+      <button class="vbtn" id="permdec" title="Permanently decrypt & save to NAS">💾 save permanently</button>
+      <span id="vmsg"></span>
+    </div>
+    <div id="placeholder">⬅ Select a clip from the list</div>
+    <div id="stage">
+      <div id="hud">
+        <div class="gear" id="h-gear">–</div>
+        <div class="arrow" id="h-l">⮜</div>
+        <div class="spd"><b id="h-spd">0</b><span>KM/H</span></div>
+        <div class="arrow" id="h-r">⮞</div>
+        <div class="accel-bar" id="h-accel" title="Accelerator"><div class="fill" id="h-accel-fill"></div></div>
+        <div class="ind brake" id="h-brake" title="Brake">●</div>
+        <div class="ind" id="h-ap" title="Autopilot">⊙</div>
+        <div class="ind" id="h-steer" title="Steering"><span class="wheel" id="h-wheel">⊕</span></div>
+      </div>
+      <div id="stageaction"></div>
+      <div id="nerd"></div>
+    </div>
+    <div id="bar">
+      <button id="play">▶</button>
+      <input id="seek" type="range" min="0" max="1000" value="0">
+      <span id="time">0:00 / 0:00</span>
+      <select id="rate" title="Speed"><option>0.5</option><option selected>1</option><option>2</option><option>4</option></select>
+      <button id="full" title="Fullscreen">⛶</button>
+    </div>
+    <div id="map" style="display:none;height:240px;border:1px solid var(--line);border-radius:8px;overflow:hidden"></div>
+  </section>
+</main>
+
+<div id="tools">
+  <div class="box">
+    <span class="x" id="toolsx">✕</span>
+    <h2>Keys &amp; Decryption</h2>
+    <div class="sub" id="tstat"></div>
+    <div class="step">
+      <h3>A · Direkt-API (automatisch) <span class="pill" id="lpill">…</span></h3>
+      <div id="loginbox">
+        <p><b>1)</b> Open this link in a <b>regular browser tab</b> and log in to Tesla:</p>
+        <p><a class="btn" id="loginlink" href="#" target="_blank" rel="noopener">🔗 Open Tesla login</a> &nbsp;<span style="color:var(--muted);font-size:11px">(or copy URL below)</span></p>
+        <textarea readonly id="loginurl" rows="3" onclick="this.select()" style="width:100%;background:#0e1318;border:1px solid var(--line);color:var(--ok);border-radius:7px;padding:8px;font-family:monospace;font-size:11px;resize:vertical"></textarea>
+        <p><b>2)</b> After login you land on <code>dashcam.tesla.com/?code=…</code> — paste that URL here:</p>
+        <div class="row"><input type="text" id="cb" placeholder="https://dashcam.tesla.com/?code=…&state=…"><button class="btn" id="cbgo">Save token</button></div>
+      </div>
+      <div class="row"><button class="btn ghost" id="fetchbtn">Fetch all missing keys</button></div>
+      <div id="lmsg"></div>
+    </div>
+    <div class="step">
+      <h3>C · Batch thumbnail generation</h3>
+      <p>Generate thumbnails for all clips with telemetry or event data once, so they appear instantly instead of loading lazily while scrolling:</p>
+      <div class="row"><button class="btn" id="thumbsbtn">🖼️ Generate thumbnails</button><span id="thumbmsg" style="color:var(--muted);font-size:12px"></span></div>
+    </div>
+    <div class="step">
+      <h3>E · Backfill telemetry for unencrypted clips</h3>
+      <p>Plain (unencrypted) clips only get their SEI telemetry (speed, gear, steering, …) extracted when opened in the viewer. Run this once to extract it for all existing plain clips that don't have it yet:</p>
+      <div class="row"><button class="btn" id="telbtn">🛰️ Extract all telemetry</button><span id="telmsg" style="color:var(--muted);font-size:12px"></span></div>
+    </div>
+    <div class="step">
+      <h3>D · Bookmarklet (fallback if API is blocked)</h3>
+      <p>1) <a class="btn" id="dljob" href="api/pending.json" download>pending_items.json</a> download.
+         2) Log in to <a class="btn ghost" href="https://dashcam.tesla.com" target="_blank" rel="noopener">dashcam.tesla.com</a>, run bookmarklet → downloads <code>keys.json</code>.
+         3) Upload here:</p>
+      <div class="row">
+        <a class="bm" id="bmlink" title="Drag to bookmarks bar">⬇ Tesla → FEKs</a>
+        <button class="btn ghost" id="copybm">Copy snippet</button>
+        <input type="file" id="keyfile" accept="application/json,.json">
+      </div>
+      <div id="msg"></div>
+    </div>
+  </div>
+</div>
+
+<script src="static/app.js" defer></script>
+</body>
+</html>

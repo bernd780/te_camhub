@@ -60,13 +60,16 @@ function make_links_for_snapshot {
   local restore_nullglob
   restore_nullglob=$(shopt -p nullglob)
   shopt -s nullglob
-  for f in "$curmnt/TeslaCam/RecentClips/"*
+  # Tesla firmware 2026.20+ writes to TeslaCam/EncryptedClips/... instead of
+  # TeslaCam/... directly when dashcam encryption is enabled in the car.
+  # Support both layouts so archiving/linking works either way.
+  for f in "$curmnt/TeslaCam/RecentClips/"* "$curmnt/TeslaCam/EncryptedClips/RecentClips/"*
   do
     #log "linking $f"
     linksnapshotfiletorecents "$f" "$curmnt" "$finalmnt"
   done
   # also link in any files that were moved to SavedClips
-  for f in "$curmnt/TeslaCam/SavedClips"/*/*
+  for f in "$curmnt/TeslaCam/SavedClips"/*/* "$curmnt/TeslaCam/EncryptedClips/SavedClips"/*/*
   do
     #log "linking $f"
     linksnapshotfiletorecents "$f" "$curmnt" "$finalmnt"
@@ -80,7 +83,7 @@ function make_links_for_snapshot {
     ln -sf "${f/$curmnt/$finalmnt}" "$saved/$eventtime"
   done
   # and the same for SentryClips
-  for f in "$curmnt/TeslaCam/SentryClips/"*/*
+  for f in "$curmnt/TeslaCam/SentryClips/"*/* "$curmnt/TeslaCam/EncryptedClips/SentryClips/"*/*
   do
     #log "linking $f"
     linksnapshotfiletorecents "$f" "$curmnt" "$finalmnt"
