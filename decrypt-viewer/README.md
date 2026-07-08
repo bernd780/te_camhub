@@ -18,6 +18,12 @@ pipeline are needed beyond the `TeslaCam/EncryptedClips` path fix in
   `archive_clips` still archives those to the NAS as configured).
 - FEK keystore + Tesla OAuth token: `/backingfiles/decrypt-viewer-state/`.
 - Web UI: `http://<pi-ip>:8099`.
+- Also embedded as an iframe in teslausb's own web UI (`http://<pi-ip>/`),
+  replacing the built-in "Viewer" tab's encryption-unaware player — see
+  `webui-patch/index.html` (patched copy of `/var/www/html/index.html`;
+  only the `tab content7` block was changed, all other tabs are untouched).
+  A pristine copy of `/var/www/html/index.html.bak` is left on the Pi by
+  the patch for easy diffing/reverting.
 
 ## Install
 
@@ -30,3 +36,12 @@ cd /path/to/decrypt-viewer
 Needs a one-time Tesla login (PKCE, `GET /api/login/url` in the UI) unless
 an existing `token_store.json` is copied into
 `/backingfiles/decrypt-viewer-state/` beforehand.
+
+To embed the viewer into teslausb's own "Viewer" tab (optional, done via
+`webui-patch/index.html` in this repo):
+```
+sudo /root/bin/remountfs_rw
+sudo cp /var/www/html/index.html /var/www/html/index.html.bak
+sudo cp webui-patch/index.html /var/www/html/index.html
+sudo reboot   # remounting root back to ro live tends to report "busy"
+```
