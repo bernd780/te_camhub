@@ -11,6 +11,7 @@ ExecStart=/usr/bin/python3 /opt/teslacam-decryptor/app/server.py \
   --scan /run/teslacam-latest/mnt/TeslaCam \
   --src /run/teslacam-latest/mnt/TeslaCam/EncryptedClips \
   --out /backingfiles/decrypted \
+  --keys /backingfiles/decrypt-viewer-state/teslacam_keys.json \
   --port 8099 \
   --interval 60
 Restart=on-failure
