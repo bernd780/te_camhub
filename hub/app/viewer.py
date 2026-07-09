@@ -208,7 +208,14 @@ class Viewer:
         self._cap_tmpfs()
         self._meta.pop(cid, None)
         self.invalidate()
-        return {"ok": not errs, "errors": errs}
+        keys2 = self._keys()
+        cameras = {cam: self._cam_state(sr, keys2) for cam, sr in cams.items()}
+        return {"ok": not errs, "errors": errs, "cameras": cameras}
+
+    def clip_paths(self, cid):
+        """Absolute source path per camera for a clip (for on-demand key fetch)."""
+        _folder, _ts, cams = self._clip_cams(cid)
+        return {cam: self._src(sr) for cam, sr in cams.items()}
 
     def bulk_targets(self):
         """Clips that still need work: locked/keyed cameras to decrypt, or a

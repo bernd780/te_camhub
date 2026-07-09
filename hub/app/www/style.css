@@ -83,6 +83,10 @@ h2.title{margin:2px 0 18px;font-size:22px;font-weight:700}
 .player .bar .x{margin-left:auto;font-size:22px;background:none;border:none;color:#fff}
 .player .grid{flex:1;display:grid;gap:6px;padding:10px;grid-template-columns:1fr 1fr 1fr;align-content:center}
 .player video{width:100%;background:#000;border-radius:8px;aspect-ratio:16/9;object-fit:cover}
+.player .bar .note{color:#cbd5e1}
+.campending{background:#12161d;border:1px solid var(--line);border-radius:8px;aspect-ratio:16/9;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;color:var(--muted)}
+.campending .ic{font-size:22px}
 
 /* ---------- files ---------- */
 .crumbs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;color:var(--muted)}

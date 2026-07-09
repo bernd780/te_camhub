@@ -125,24 +125,31 @@ async function refreshNasStatus(nasrow){
   nasrow.append(rl);
 }
 async function openClip(c){
-  toast("Bereite Clip vor…");
-  try{await jpost("api/prepare",{id:c.id});}catch(e){}
-  const cams=["front","left_repeater","right_repeater","back","left_pillar","right_pillar"];
   const wrap=el("div","player");
   const bar=el("div","bar",`<b>${c.timestamp.replace("_"," ")}</b>`);
+  const status=el("span","note","Entschlüssele…");bar.append(status);
   const x=el("button","x","✕");x.onclick=()=>wrap.remove();bar.append(x);
   wrap.append(bar);
-  const grid=el("div","grid");
+  const grid=el("div","grid");wrap.append(grid);
+  document.body.append(wrap);
+  let res;
+  try{res=await jpost("api/prepare",{id:c.id});}catch(e){status.textContent="✗ Verbindungsfehler";return;}
+  if(!res||!res.cameras){status.textContent="✗ "+(res&&res.error?res.error:"Fehler");return;}
+  status.remove();
   let any=false;
-  cams.forEach(cam=>{
-    const v=document.createElement("video");v.controls=true;v.playsInline=true;v.muted=true;
-    v.src="media/EncryptedClips/"+c.folder.replace(/^EncryptedClips\/?/,"")+"/"+c.timestamp+"-"+cam+".mp4";
-    // try both encrypted and plain locations via media resolver:
-    v.src="media/"+encodeURI(c.folder+"/"+c.timestamp+"-"+cam+".mp4");
-    v.onerror=()=>{v.remove();};
-    grid.append(v);any=true;
+  const camLabel={front:"Front",left_repeater:"Links",right_repeater:"Rechts",back:"Heck",left_pillar:"Links (Säule)",right_pillar:"Rechts (Säule)"};
+  Object.entries(res.cameras).forEach(([cam,info])=>{
+    if(info.state==="ready"||info.state==="plain"){
+      const v=document.createElement("video");v.controls=true;v.playsInline=true;v.muted=true;
+      v.src=info.url;
+      grid.append(v);any=true;
+    }else{
+      const why=info.state==="locked"?"kein Schlüssel verfügbar":"Fehler beim Entschlüsseln";
+      grid.append(el("div","campending",`<div class="ic">🔒</div><div>${camLabel[cam]||cam}</div><div class="note">${why}</div>`));
+    }
   });
-  wrap.append(grid);document.body.append(wrap);
+  if(!any)grid.append(el("div","note","Kein Video verfügbar – kein Schlüssel für diesen Clip."));
+  if(res.errors&&res.errors.length)toast("Fehler: "+res.errors.join(", "));
 }
 
 /* ---------------- Dateien ---------------- */

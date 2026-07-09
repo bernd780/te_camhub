@@ -99,6 +99,46 @@ def key_fetch_loop():
             print("[hub] key fetch:", e, flush=True)
 
 
+def _fetch_keys_for_clip(cid):
+    """Try to fetch any missing FEKs for this clip's cameras right now (used
+    when the user opens a clip, instead of waiting for the 60s background
+    loop). Silently does nothing if the vault is locked or there's no valid
+    Tesla token -- prepare() will then just report the cameras as locked."""
+    if not (VAULT.is_unlocked() and AUTH.get_access_token()):
+        return 0
+    keys = VAULT.keys()
+    items = []
+    for path in VIEWER.clip_paths(cid).values():
+        if not os.path.isfile(path):
+            continue
+        eid = keybridge.clip_id(CFG["src"], path)
+        if eid in keys:
+            continue
+        try:
+            with open(path, "rb") as f:
+                head = f.read(keybridge.HEADER_SIZE)
+        except OSError:
+            continue
+        if not keybridge.is_ecryptfs(head):
+            continue
+        try:
+            wk = keybridge.parse_wrapped_key(head)
+        except Exception:
+            continue
+        wk["id"] = eid
+        items.append(wk)
+    if not items:
+        return 0
+    try:
+        res = tesla_api.fetch_keys(items, AUTH.get_access_token())
+    except tesla_api.DecryptApiError:
+        return 0
+    got = VAULT.merge_keys(res)
+    if got:
+        VIEWER.invalidate()
+    return got
+
+
 def nas_sync_loop():
     """Periodically refresh the local-vs-NAS archive coverage percentage and
     push any newly-known per-video key sidecars to the NAS."""
@@ -322,7 +362,9 @@ class H(BaseHTTPRequestHandler):
         _touch()
 
         if path == "/api/prepare":
-            return self._json(200, VIEWER.prepare(body.get("id", "")))
+            cid = body.get("id", "")
+            _fetch_keys_for_clip(cid)
+            return self._json(200, VIEWER.prepare(cid))
         if path == "/api/bulk_prepare":
             with _bulk_guard:
                 if _bulk_job["running"]:
