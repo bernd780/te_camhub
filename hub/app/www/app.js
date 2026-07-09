@@ -120,7 +120,12 @@ async function viewClips(m){
     const b=el("div","badges");
     b.append(el("span","badge "+(c.encrypted?"enc":"plain"),c.encrypted?"🔒 verschlüsselt":"offen"));
     if(c.has_event)b.append(el("span","badge event",c.reason||"Event"));
-    if(c.has_locked)b.append(el("span","badge locked","kein Schlüssel"));
+    if(c.encrypted){
+      const kk=c.cams_keyed||0,kt=c.cams_encrypted||0;
+      const keyCls=kt===0?"locked":kk===0?"locked":kk<kt?"keypartial":"keyok";
+      const keyTxt=kk===0?"🔑 kein Schlüssel":kk<kt?`🔑 ${kk}/${kt} Kameras`:"🔑 Schlüssel vorhanden";
+      b.append(el("span","badge "+keyCls,keyTxt));
+    }
     b.append(el("span","badge "+(nasClips[c.id]?"nasok":"nasno"),nasClips[c.id]?"☁️ auf NAS":"☁️ noch nicht"));
     meta.append(b);card.append(meta);
     card.onclick=()=>openClip(c);

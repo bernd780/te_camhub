@@ -108,6 +108,9 @@ class Viewer:
         c["has_locked"] = "locked" in sts
         c["playable"] = any(s in ("plain", "ready") for s in sts)
         c["encrypted"] = any(s in ("ready", "key", "locked") for s in sts)
+        enc_sts = [s for s in sts if s in ("ready", "key", "locked")]
+        c["cams_encrypted"] = len(enc_sts)
+        c["cams_keyed"] = sum(1 for s in enc_sts if s in ("ready", "key"))
         cached = self._meta.get(c["id"])
         if cached is None:
             cached = self._compute_meta(c)
@@ -144,6 +147,41 @@ class Viewer:
                 pass
         return {"has_tel": ht, "has_event": he, "gps_bounds": gps,
                 "has_data": ht or he, "reason": reason, "_track": track}
+
+    def event_data(self, cid):
+        """event.json for a clip's folder, incl. the seek offset (seconds
+        into the clip) computed from the event timestamp vs. the clip's
+        start timestamp -- lets the player jump straight to the trigger."""
+        folder, ts = cid.rsplit("|", 1) if "|" in cid else ("", cid)
+        ejp = os.path.join(self.scan_dir, folder, "event.json")
+        if not os.path.isfile(ejp):
+            return None
+        try:
+            ev = json.load(open(ejp, encoding="utf-8"))
+        except Exception:
+            return None
+        result = {}
+        et = ev.get("timestamp", "")
+        if et:
+            try:
+                cs = datetime.datetime.strptime(ts, "%Y-%m-%d_%H-%M-%S")
+                evt = datetime.datetime.strptime(et[:19], "%Y-%m-%dT%H:%M:%S")
+                off = (evt - cs).total_seconds()
+                if 0 <= off <= 3600:
+                    result["seek"] = off
+            except Exception:
+                pass
+        lat = float(ev.get("est_lat") or ev.get("lat") or 0)
+        lon = float(ev.get("est_lon") or ev.get("lon") or 0)
+        if lat and lon:
+            result["lat"] = lat
+            result["lon"] = lon
+        for k in ("reason", "city", "street"):
+            if ev.get(k):
+                result[k] = ev[k]
+        if ev.get("camera") is not None:
+            result["camera"] = ev["camera"]
+        return result or None
 
     def clips(self, ttl=10):
         now = time.time()
@@ -287,7 +325,11 @@ class Viewer:
                 src = self._src(front)
                 if not os.path.isfile(src):
                     return None
-            return cache if pipeline.make_thumbnail(src, cache, seek=1.0) else None
+            seek = 1.0
+            ev = self.event_data(cid)
+            if ev and "seek" in ev and 0 <= ev["seek"] <= 120:
+                seek = ev["seek"]
+            return cache if pipeline.make_thumbnail(src, cache, seek=seek) else None
 
     def _cap_tmpfs(self):
         try:
