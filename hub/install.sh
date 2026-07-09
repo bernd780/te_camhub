@@ -57,6 +57,16 @@ else
        "(teslausb's own one-step setup may not have run yet)"
 fi
 
+echo "[hub-install] installing snapshot-pointer helper + timer"
+cp "$HUB_SRC/update-latest-snapshot.sh" "$HUB_DST/update-latest-snapshot.sh"
+chmod +x "$HUB_DST/update-latest-snapshot.sh"
+cp "$HUB_SRC/teslacam-latest-snapshot.service" /etc/systemd/system/teslacam-latest-snapshot.service
+cp "$HUB_SRC/teslacam-latest-snapshot.timer" /etc/systemd/system/teslacam-latest-snapshot.timer
+systemctl daemon-reload
+systemctl enable teslacam-latest-snapshot.timer
+systemctl start teslacam-latest-snapshot.timer
+systemctl start teslacam-latest-snapshot.service
+
 echo "[hub-install] installing systemd unit"
 cp "$HUB_SRC/teslacam-hub.service" /etc/systemd/system/teslacam-hub.service
 systemctl daemon-reload
