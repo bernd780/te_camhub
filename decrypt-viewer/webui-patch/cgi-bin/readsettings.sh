@@ -56,6 +56,18 @@ RETENTION_MODE=$(getval RETENTION_MODE)
 RETENTION_DAYS=$(jsonesc "$(getval RETENTION_DAYS)")
 RETENTION_FREE_GB=$(jsonesc "$(getval RETENTION_FREE_GB)")
 VAULT_NAS_AUTOUNLOCK=$(getval VAULT_NAS_AUTOUNLOCK)
+WEB_AUTH=$(getval WEB_AUTH)
+WEB_TLS=$(getval WEB_TLS)
+SSH_DISABLE_PASSWORD=$(getval SSH_DISABLE_PASSWORD)
+VAULT_AUTOLOCK_MIN=$(jsonesc "$(getval VAULT_AUTOLOCK_MIN)")
+if sudo test -f /backingfiles/decrypt-viewer-state/teslacam_keys.json || sudo test -f /backingfiles/decrypt-viewer-state/token_store.json; then
+  LEGACY_PRESENT=true
+else
+  LEGACY_PRESENT=false
+fi
+# nginx-based web-login/TLS is disabled on this image (no working SSL + reloads
+# are no-ops). Always report unavailable so the UI greys the toggles out.
+TLS_SUPPORTED=false
 
 SHARE_PASSWORD_SET=$(isset SHARE_PASSWORD)
 WIFIPASS_SET=$(isset WIFIPASS)
@@ -83,6 +95,12 @@ Content-type: application/json
   "retention_mode": "$RETENTION_MODE",
   "retention_days": "$RETENTION_DAYS",
   "retention_free_gb": "$RETENTION_FREE_GB",
-  "vault_nas_autounlock": "$VAULT_NAS_AUTOUNLOCK"
+  "vault_nas_autounlock": "$VAULT_NAS_AUTOUNLOCK",
+  "web_auth": "$WEB_AUTH",
+  "web_tls": "$WEB_TLS",
+  "ssh_disable_password": "$SSH_DISABLE_PASSWORD",
+  "vault_autolock_min": "$VAULT_AUTOLOCK_MIN",
+  "legacy_present": $LEGACY_PRESENT,
+  "tls_supported": $TLS_SUPPORTED
 }
 EOF

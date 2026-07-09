@@ -31,6 +31,7 @@ ffmpeg at the event timestamp (event.json) or ~1 s and caches it.
   GET  /media/<scanrel>       file from cache OR plain (range-capable)
 """
 import os, json, argparse, re, glob, posixpath, threading, time, base64, zipfile, hashlib, datetime, math
+import subprocess, crypt
 from urllib.parse import urlparse, parse_qs
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -805,6 +806,106 @@ def _import_legacy():
         tok = {}
     return keys, tok
 
+# ---------- Legacy plaintext cleanup (audit #1) -------------------------------
+def _legacy_paths():
+    return [os.path.join(DATA_DIR, "teslacam_keys.json"),
+            os.path.join(DATA_DIR, "token_store.json"),
+            os.path.join(DATA_DIR, "token_store.json.pkce")]
+
+def legacy_status():
+    """Whether old plaintext key/token files still exist on the stick, and
+    whether every legacy FEK is already safely inside the vault."""
+    kp = os.path.join(DATA_DIR, "teslacam_keys.json")
+    present = any(os.path.isfile(p) for p in _legacy_paths())
+    all_imported, missing = False, 0
+    if os.path.isfile(kp) and VAULT and VAULT.is_unlocked():
+        try:
+            legacy = json.load(open(kp, encoding="utf-8"))
+            vk = VAULT.keys()
+            missing = sum(1 for cid in legacy if cid not in vk)
+            all_imported = (missing == 0)
+        except Exception:
+            all_imported = False
+    elif not os.path.isfile(kp):
+        all_imported = True   # no keystore to import; token-only wipe is safe
+    return {"present": present, "all_imported": all_imported, "missing": missing}
+
+def wipe_legacy():
+    """Securely delete the legacy plaintext keystore + token, but only after
+    confirming every legacy key is in the vault (no data loss)."""
+    if not (VAULT and VAULT.is_unlocked()):
+        return {"ok": False, "error": "locked"}
+    st = legacy_status()
+    if not st["present"]:
+        return {"ok": True, "wiped": 0, "note": "nichts zu löschen"}
+    if not st["all_imported"]:
+        return {"ok": False, "error": "%d Legacy-Schlüssel fehlen noch im Vault" % st["missing"]}
+    n = 0
+    for p in _legacy_paths():
+        if os.path.isfile(p):
+            try:
+                subprocess.run(["shred", "-u", p], capture_output=True, timeout=30)
+            except Exception:
+                pass
+            if os.path.exists(p):
+                try:
+                    os.remove(p)
+                except OSError:
+                    continue
+            n += 1
+    print(f"[wipe] removed {n} legacy plaintext file(s)", flush=True)
+    return {"ok": True, "wiped": n}
+
+# ---------- Web-auth htpasswd sync (audit #2/#3) ------------------------------
+def sync_htpasswd(passphrase):
+    """When WEB_AUTH is on, write /etc/nginx/.htpasswd for user 'tesla' using a
+    strong sha512-crypt hash of the (vault) passphrase. Called on setup/unlock/
+    change so the single password stays in sync. Root fs must be remounted rw."""
+    if getconf("WEB_AUTH") != "true" or not passphrase:
+        return
+    try:
+        h = crypt.crypt(passphrase, crypt.mksalt(crypt.METHOD_SHA512))
+        subprocess.run(["mount", "/", "-o", "remount,rw"], capture_output=True)
+        with open("/etc/nginx/.htpasswd", "w") as f:
+            f.write("tesla:%s\n" % h)
+        os.chmod("/etc/nginx/.htpasswd", 0o644)
+        subprocess.run(["mount", "/", "-o", "remount,ro"], capture_output=True)
+        print("[web-auth] htpasswd updated", flush=True)
+    except Exception as e:
+        print("[web-auth] htpasswd sync failed:", e, flush=True)
+
+# ---------- Auto-lock (audit #5) ---------------------------------------------
+_last_activity = time.time()
+
+def _touch_activity():
+    global _last_activity
+    _last_activity = time.time()
+
+def _clear_shm():
+    try:
+        for root, _, names in os.walk(OUT_DIR):
+            for nm in names:
+                if nm.endswith((".mp4", ".telemetry.json", ".jpg", ".png")) or nm == ".meta_cache.json":
+                    try:
+                        os.remove(os.path.join(root, nm))
+                    except OSError:
+                        pass
+    except Exception:
+        pass
+
+def autolock_loop():
+    while True:
+        time.sleep(20)
+        try:
+            mins = int(getconf("VAULT_AUTOLOCK_MIN") or "0")
+        except ValueError:
+            mins = 0
+        if mins > 0 and VAULT and VAULT.is_unlocked() and (time.time() - _last_activity) > mins * 60:
+            VAULT.lock()
+            _clear_shm()
+            invalidate()
+            print(f"[vault] auto-locked after {mins} min idle", flush=True)
+
 
 def stage_key_sidecars():
     """For each encrypted clip whose FEK is in the vault, write an encrypted
@@ -932,10 +1033,12 @@ class H(BaseHTTPRequestHandler):
         return parse_qs(urlparse(self.path).query).get(key, [""])[0]
 
     def _locked(self):
-        """Send 423 and return True if the vault is not unlocked."""
+        """Send 423 and return True if the vault is not unlocked. Also marks
+        real content activity (drives the idle auto-lock timer)."""
         if not (VAULT and VAULT.is_unlocked()):
             self._send(423, {"error": "locked"})
             return True
+        _touch_activity()
         return False
 
     def do_GET(self):
@@ -954,6 +1057,8 @@ class H(BaseHTTPRequestHandler):
                 "has_vault": bool(VAULT and VAULT.has_vault()),
                 "unlocked": bool(VAULT and VAULT.is_unlocked()),
             })
+        if path == "/api/vault/legacy_status":
+            return self._send(200, legacy_status())
         if path == "/api/status":
             unlocked = bool(VAULT and VAULT.is_unlocked())
             st = counts(clips_cached()) if unlocked else {}
@@ -1073,18 +1178,23 @@ class H(BaseHTTPRequestHandler):
             except VaultError as e:
                 return self._send(400, {"ok": False, "error": str(e)})
             ensure_nas_mk()
+            sync_htpasswd(pw)
+            _touch_activity()
             invalidate()
             bg(run_cycle, do_fetch=True)
             return self._send(200, {"ok": True, "imported_keys": len(imp_keys)})
         if path == "/api/vault/unlock":
-            if VAULT.unlock_with_pass(body.get("pass", "")):
+            pw = body.get("pass", "")
+            if VAULT.unlock_with_pass(pw):
                 ensure_nas_mk()
+                sync_htpasswd(pw)
+                _touch_activity()
                 invalidate()
                 bg(run_cycle, do_fetch=True)
                 return self._send(200, {"ok": True})
             return self._send(200, {"ok": False, "error": "falsches Passwort"})
         if path == "/api/vault/lock":
-            VAULT.lock(); invalidate()
+            VAULT.lock(); _clear_shm(); invalidate()
             return self._send(200, {"ok": True})
         if path == "/api/vault/change":
             ok = False
@@ -1092,7 +1202,11 @@ class H(BaseHTTPRequestHandler):
                 ok = VAULT.change_pass(body.get("old", ""), body.get("new", ""))
             except VaultError as e:
                 return self._send(400, {"ok": False, "error": str(e)})
+            if ok:
+                sync_htpasswd(body.get("new", ""))
             return self._send(200, {"ok": ok})
+        if path == "/api/vault/wipe_legacy":
+            return self._send(200, wipe_legacy())
 
         # ----- everything below requires an unlocked vault -----
         if self._locked():
@@ -1164,6 +1278,7 @@ if __name__ == "__main__":
     _META_CACHE_FILE = os.path.join(OUT_DIR, ".meta_cache.json")
     _load_meta_cache()
     threading.Thread(target=scheduler, daemon=True).start()
+    threading.Thread(target=autolock_loop, daemon=True).start()
     print(f"Viewer :{a.port} scan={SCAN_DIR} enc={SRC_DIR} (prefix='{ENC_PREFIX}') "
           f"out={OUT_DIR} vault={'present' if VAULT.has_vault() else 'none'} "
           f"embed={EMBED_KEY} direct_api={DIRECT_API}", flush=True)

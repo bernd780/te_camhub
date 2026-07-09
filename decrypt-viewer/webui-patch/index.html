@@ -1103,6 +1103,23 @@ video {
           <input type="number" min="1" id="cfg_retention_free_gb" style="width:100%;padding:6px;box-sizing:border-box;"></label>
         <p style="font-size:12px;opacity:.7;margin:6px 0;">Gel&ouml;scht wird nur, was bereits auf dem NAS gesichert ist.</p>
 
+        <h3 style="margin:18px 0 4px;">Sicherheit</h3>
+        <div id="cfg_legacy_row" style="margin:8px 0;display:none;">
+          <button type="button" id="cfg_wipe_legacy" style="padding:6px 14px;">Klartext-Reste vom Stick l&ouml;schen</button>
+          <span id="cfg_wipe_status" style="margin-left:10px;font-size:13px;"></span>
+          <p style="font-size:12px;opacity:.7;margin:4px 0;">Entfernt den alten unverschl&uuml;sselten Schl&uuml;sselspeicher/Token vom Stick (erst nach Import in den Tresor).</p>
+        </div>
+        <label style="display:block;margin:8px 0;">
+          <input type="checkbox" id="cfg_ssh_disable_password"> SSH-Passwort-Login abschalten
+          <span style="font-size:12px;opacity:.7;">(danach nur noch per SSH-Schl&uuml;ssel/Konsole – Weboberfl&auml;che bleibt)</span></label>
+        <label style="display:block;margin:8px 0;">
+          <input type="checkbox" id="cfg_web_auth"> Weboberfl&auml;che mit Login sch&uuml;tzen (aktiviert automatisch HTTPS; Benutzer <code>tesla</code>, Tresor-Passwort)</label>
+        <label style="display:block;margin:8px 0;">
+          <input type="checkbox" id="cfg_web_tls"> Nur HTTPS erzwingen (selbstsigniert)</label>
+        <p id="cfg_tls_note" style="display:none;font-size:12px;color:#a00;margin:4px 0;">Auf diesem Image ist HTTPS/Web-Login nicht verf&uuml;gbar (nginx ohne SSL-Modul). Der Viewer selbst ist bereits durch das Tresor-Passwort gesch&uuml;tzt.</p>
+        <label style="display:block;margin:8px 0;">Tresor automatisch sperren nach (Minuten, 0 = aus)<br>
+          <input type="number" min="0" id="cfg_vault_autolock_min" style="width:100%;padding:6px;box-sizing:border-box;"></label>
+
         <div style="margin-top:18px;">
           <button type="button" id="cfg_save" style="padding:8px 18px;">Speichern</button>
           <span id="cfg_status" style="margin-left:12px;"></span>
@@ -1141,6 +1158,16 @@ video {
           $("cfg_vault_nas_autounlock").checked = bool(c.vault_nas_autounlock);
           $("cfg_retention_days").value = c.retention_days || "";
           $("cfg_retention_free_gb").value = c.retention_free_gb || "";
+          $("cfg_ssh_disable_password").checked = bool(c.ssh_disable_password);
+          $("cfg_web_auth").checked = bool(c.web_auth);
+          $("cfg_web_tls").checked = bool(c.web_tls);
+          $("cfg_vault_autolock_min").value = c.vault_autolock_min || "";
+          $("cfg_legacy_row").style.display = c.legacy_present ? "block" : "none";
+          if (c.tls_supported === false) {
+            $("cfg_web_auth").checked = false; $("cfg_web_auth").disabled = true;
+            $("cfg_web_tls").checked = false; $("cfg_web_tls").disabled = true;
+            $("cfg_tls_note").style.display = "block";
+          }
           var rm = c.retention_mode || "off";
           var rb = document.getElementById("cfg_ret_" + rm) || $("cfg_ret_off");
           rb.checked = true;
@@ -1179,6 +1206,10 @@ video {
         add("retention_mode", retMode());
         if ($("cfg_retention_days").value) add("retention_days", $("cfg_retention_days").value);
         if ($("cfg_retention_free_gb").value) add("retention_free_gb", $("cfg_retention_free_gb").value);
+        add("ssh_disable_password", $("cfg_ssh_disable_password").checked);
+        add("web_auth", $("cfg_web_auth").checked);
+        add("web_tls", $("cfg_web_tls").checked || $("cfg_web_auth").checked);
+        if ($("cfg_vault_autolock_min").value) add("vault_autolock_min", $("cfg_vault_autolock_min").value);
         // passwords only when the user typed something
         if ($("cfg_share_password").value) add("share_password", $("cfg_share_password").value);
         if ($("cfg_wifipass").value) add("wifipass", $("cfg_wifipass").value);
@@ -1234,8 +1265,27 @@ video {
         x.send(p.join("&"));
       }
 
+      function wipeLegacy() {
+        if (!confirm("Alte Klartext-Schlüssel/Token vom Stick löschen? Wird nur ausgeführt, wenn alle Schlüssel bereits im Tresor sind.")) return;
+        $("cfg_wipe_status").textContent = "Lösche…";
+        var x = new XMLHttpRequest();
+        x.open("POST", "cgi-bin/wipe-legacy.sh");
+        x.onload = function () {
+          var r = {}; try { r = JSON.parse(x.responseText); } catch (e) {}
+          if (r.ok) {
+            $("cfg_wipe_status").textContent = "✓ gelöscht (" + (r.wiped || 0) + ")";
+            $("cfg_legacy_row").style.display = "none";
+          } else {
+            $("cfg_wipe_status").textContent = "✗ " + (r.error || "Fehler");
+          }
+        };
+        x.onerror = function () { $("cfg_wipe_status").textContent = "✗ Verbindungsfehler"; };
+        x.send();
+      }
+
       $("cfg_save").addEventListener("click", save);
       $("cfg_testnas").addEventListener("click", testnas);
+      $("cfg_wipe_legacy").addEventListener("click", wipeLegacy);
       ["cfg_ret_off", "cfg_ret_time", "cfg_ret_space"].forEach(function (id) {
         document.getElementById(id).addEventListener("change", retToggle);
       });

@@ -55,9 +55,13 @@ declare -A MAP=(
   [retention_days]=RETENTION_DAYS
   [retention_free_gb]=RETENTION_FREE_GB
   [vault_nas_autounlock]=VAULT_NAS_AUTOUNLOCK
+  [web_auth]=WEB_AUTH
+  [web_tls]=WEB_TLS
+  [ssh_disable_password]=SSH_DISABLE_PASSWORD
+  [vault_autolock_min]=VAULT_AUTOLOCK_MIN
 )
-BOOLS=" archive_recentclips archive_savedclips archive_sentryclips archive_trackmodeclips sync_all_content vault_nas_autounlock "
-INTS=" snapshot_interval archive_delay retention_days retention_free_gb "
+BOOLS=" archive_recentclips archive_savedclips archive_sentryclips archive_trackmodeclips sync_all_content vault_nas_autounlock web_auth web_tls ssh_disable_password "
+INTS=" snapshot_interval archive_delay retention_days retention_free_gb vault_autolock_min "
 PASSWORDS=" share_password wifipass "
 # retention_mode is a constrained enum
 if [ -v "P[retention_mode]" ]; then
@@ -122,5 +126,16 @@ done
 
 sync
 sudo mount / -o remount,ro 2>/dev/null   # may report "busy"; harmless
+
+# If any security-relevant field was part of this save, (re)apply sshd/nginx/TLS.
+# apply-security.sh reads the conf itself and gates every nginx reload with
+# `nginx -t`, so a bad config can never lock the user out. Discard its HTTP output.
+for f in "${!P[@]}"; do
+  case "$f" in
+    web_auth|web_tls|ssh_disable_password)
+      bash /var/www/html/cgi-bin/apply-security.sh >/dev/null 2>&1
+      break ;;
+  esac
+done
 
 printf 'HTTP/1.0 200 OK\r\nContent-type: application/json\r\n\r\n{"ok":true}\n'

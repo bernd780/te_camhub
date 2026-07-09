@@ -32,10 +32,40 @@ The stick must be worthless if pulled. Therefore:
 First run: open the viewer, set a passphrase (optionally import existing keys).
 After each reboot the vault is locked until you unlock it (or NAS auto-unlock).
 
-**Caveat:** the web UI has no auth and no TLS — the passphrase travels over
-plain HTTP on the LAN and, once unlocked, anyone on the LAN can view. The vault
-protects data **at rest** (the stated goal); add `.htpasswd`/TLS for LAN
-hardening as a follow-up.
+## Security settings ("Sicherheit" in the Einstellungen tab)
+
+- **Klartext-Reste vom Stick löschen** — securely deletes the legacy
+  `teslacam_keys.json` / `token_store.json` from the stick, but only after the
+  viewer confirms every legacy FEK is already inside the vault
+  (`/api/vault/wipe_legacy`). Do this once, after the first vault setup —
+  otherwise pulling the stick still yields all keys + the Tesla token in clear.
+- **SSH-Passwort-Login abschalten** (`SSH_DISABLE_PASSWORD`) — writes an sshd
+  drop-in `PasswordAuthentication no`. Deliberately does *not* reuse the vault
+  password as the system password (that would drop an extra crackable hash of
+  your master password onto the stick and add a network-brute-force surface).
+- **Vault automatisch sperren nach N Minuten** (`VAULT_AUTOLOCK_MIN`) — the
+  service locks the vault and clears the tmpfs plaintext after idle, shrinking
+  the window in which RAM holds the master key + decrypted clips.
+
+### Known limitation: no browser TLS / web-auth on this image
+
+The prebuilt teslausb nginx here has **no `http_ssl_module`**, and nginx config
+**reloads are no-ops** on this image (a `/var/log/nginx` permission quirk).
+Browser-facing HTTPS + basic-auth therefore cannot be delivered safely (a
+`listen 443 ssl` block would even make nginx fail to start after a reboot). The
+`apply-security.sh` script hard-disables `WEB_AUTH`/`WEB_TLS` so it can never
+lock the port-80 UI out, and the UI greys those toggles with a note.
+
+Mitigation already in place: the **viewer (:8099) is gated by the vault
+passphrase**, so the sensitive data (decrypted clips) already needs the
+password. Only the plain teslausb port-80 UI (Diagnostics/Tools/Files) is
+unauthenticated. Proper LAN hardening (fix the nginx log permission + an
+SSL-capable nginx, or front with stunnel) is a separate follow-up.
+
+**Residual at-rest caveat:** WiFi + NAS passwords remain in
+`teslausb_setup_variables.conf` in clear (teslausb design); and if NAS
+auto-unlock is enabled, the master key sits on the NAS. The vault itself
+(scrypt) protects the FEKs/token at rest.
 
 Runs independently of `archiveloop`/`make_snapshot.sh` — it just watches
 `/backingfiles/snapshots/` for the newest snapshot (see
