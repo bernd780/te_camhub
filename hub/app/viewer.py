@@ -210,6 +210,33 @@ class Viewer:
         self.invalidate()
         return {"ok": not errs, "errors": errs}
 
+    def bulk_targets(self):
+        """Clips that still need work: locked/keyed cameras to decrypt, or a
+        plain front camera whose telemetry hasn't been extracted yet."""
+        out = []
+        for c in self.clips():
+            front = c["cameras"].get("front", {})
+            if c["needs_prepare"] or (front.get("state") == "plain" and not c.get("has_tel")):
+                out.append(c["id"])
+        return out
+
+    def bulk_prepare(self, on_progress=None):
+        """Decrypt + extract metadata (telemetry/thumbnail) for every clip
+        that needs it. Calls on_progress(done, total, cid) after each clip."""
+        targets = self.bulk_targets()
+        errors = []
+        for i, cid in enumerate(targets, 1):
+            res = self.prepare(cid)
+            if not res.get("ok"):
+                errors.extend(res.get("errors", []))
+            try:
+                self.make_thumb(cid)
+            except Exception:
+                pass
+            if on_progress:
+                on_progress(i, len(targets), cid)
+        return {"ok": not errors, "total": len(targets), "errors": errors}
+
     def resolve_media(self, sr):
         sr = posixpath.normpath(sr).lstrip("/")
         cp = self._cache(sr)

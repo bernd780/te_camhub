@@ -30,6 +30,9 @@ _sessions = {}    # token -> expiry_ts
 _sess_guard = threading.Lock()
 _last_activity = time.time()
 
+_bulk_job = {"running": False, "done": 0, "total": 0, "errors": []}
+_bulk_guard = threading.Lock()
+
 
 # ---------- sessions ----------------------------------------------------------
 def _new_session():
@@ -94,6 +97,23 @@ def key_fetch_loop():
                         print(f"[hub] fetched {got} new keys", flush=True)
         except Exception as e:
             print("[hub] key fetch:", e, flush=True)
+
+
+def _bulk_worker():
+    def progress(done, total, _cid):
+        with _bulk_guard:
+            _bulk_job["done"] = done
+            _bulk_job["total"] = total
+    try:
+        res = VIEWER.bulk_prepare(on_progress=progress)
+        with _bulk_guard:
+            _bulk_job["errors"] = res.get("errors", [])
+    except Exception as e:
+        with _bulk_guard:
+            _bulk_job["errors"].append(str(e))
+    finally:
+        with _bulk_guard:
+            _bulk_job["running"] = False
 
 
 # ---------- HTTP handler ------------------------------------------------------
@@ -250,6 +270,9 @@ class H(BaseHTTPRequestHandler):
             return self._json(200, {"url": AUTH.make_login_url()})
         if path == "/api/nas/test":
             return self._json(200, hubconf.test_nas())
+        if path == "/api/bulk_prepare":
+            with _bulk_guard:
+                return self._json(200, dict(_bulk_job))
         return self._json(404, {"error": "not found"})
 
     def do_POST(self):
@@ -285,6 +308,14 @@ class H(BaseHTTPRequestHandler):
 
         if path == "/api/prepare":
             return self._json(200, VIEWER.prepare(body.get("id", "")))
+        if path == "/api/bulk_prepare":
+            with _bulk_guard:
+                if _bulk_job["running"]:
+                    return self._json(200, dict(_bulk_job))
+                _bulk_job.update(running=True, done=0, total=len(VIEWER.bulk_targets()), errors=[])
+            threading.Thread(target=_bulk_worker, daemon=True).start()
+            with _bulk_guard:
+                return self._json(200, dict(_bulk_job))
         if path == "/api/settings":
             ok, err = hubconf.write_settings(body)
             if ok and "ssh_disable_password" in body:

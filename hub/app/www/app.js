@@ -68,13 +68,34 @@ function render(view){
 
 /* ---------------- Aufnahmen ---------------- */
 async function viewClips(m){
+  m.innerHTML="";
   m.append(el("h2","title","Aufnahmen"));
   const info=el("div","sub","lädt…");m.append(info);
+  const bar=el("div","saverow");
+  const bulkbtn=el("button","btn sm","🔓 Alle entschlüsseln + Metadaten erzeugen");
+  const bulkmsg=el("span","note","");
+  bar.append(bulkbtn,bulkmsg);m.append(bar);
   const grid=el("div","clipgrid");m.append(grid);
   let clips;try{clips=await jget("api/clips");}catch(e){return;}
   const enc=clips.filter(c=>c.encrypted).length;
   info.textContent=`${clips.length} Clips · ${enc} verschlüsselt`;
   if(!clips.length){info.textContent="Keine Aufnahmen gefunden.";return;}
+  bulkbtn.onclick=async()=>{
+    bulkbtn.disabled=true;bulkmsg.textContent="startet…";
+    let st;try{st=await jpost("api/bulk_prepare",{});}catch(e){bulkbtn.disabled=false;bulkmsg.textContent="✗ Fehler";return;}
+    const poll=async()=>{
+      try{st=await jget("api/bulk_prepare");}catch(e){return;}
+      bulkmsg.textContent=st.total?`${st.done} / ${st.total}…`:"nichts zu tun";
+      if(st.running){setTimeout(poll,1500);}
+      else{
+        bulkbtn.disabled=false;
+        bulkmsg.textContent=st.errors&&st.errors.length?`fertig, ${st.errors.length} Fehler`:(st.total?"✓ fertig":"nichts zu tun");
+        toast("Entschlüsselung abgeschlossen");
+        viewClips(m);
+      }
+    };
+    setTimeout(poll,1200);
+  };
   clips.forEach(c=>{
     const card=el("div","clip");
     const th=el("div","thumb");th.append(el("div","ph","🎞️"));card.append(th);
