@@ -74,6 +74,23 @@ systemctl daemon-reload
 systemctl enable teslacam-hub
 systemctl restart teslacam-hub
 
+echo "[hub-install] applying secure defaults on first run only (never overrides an existing conf value)"
+CONF=/root/teslausb_setup_variables.conf
+getconf_val() { grep "^export $1=" "$CONF" 2>/dev/null | tail -1 | sed -E "s/^export $1=//; s/^'(.*)'\$/\1/"; }
+if [ -f "$CONF" ] && [ -z "$(getconf_val SSH_DISABLE_PASSWORD)" ]; then
+  echo "[hub-install] WARNING: disabling SSH password login by default." \
+       "Make sure an SSH key is authorized for this Pi BEFORE relying on remote SSH again" \
+       "-- otherwise only physical/console access can get you back in." \
+       "Revert any time via Einstellungen -> Sicherheit."
+  echo "export SSH_DISABLE_PASSWORD='true'" >> "$CONF"
+  mkdir -p /etc/ssh/sshd_config.d
+  echo "PasswordAuthentication no" > /etc/ssh/sshd_config.d/99-teslausb.conf
+  systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || true
+fi
+if [ -f "$CONF" ] && [ -z "$(getconf_val VAULT_AUTOLOCK_MIN)" ]; then
+  echo "export VAULT_AUTOLOCK_MIN='180'" >> "$CONF"
+fi
+
 echo "[hub-install] remounting / ro"
 mount / -o remount,ro
 

@@ -405,6 +405,16 @@ class H(BaseHTTPRequestHandler):
             return self._json(401, {"error": "auth"})
         _touch()
 
+        if path == "/api/vault/change_pass":
+            old, new = body.get("old", ""), body.get("new", "")
+            if not new:
+                return self._json(400, {"ok": False, "error": "neues Passwort fehlt"})
+            try:
+                if not VAULT.change_pass(old, new):
+                    return self._json(400, {"ok": False, "error": "aktuelles Passwort falsch"})
+                return self._json(200, {"ok": True})
+            except VaultError as e:
+                return self._json(400, {"ok": False, "error": str(e)})
         if path == "/api/prepare":
             cid = body.get("id", "")
             _fetch_keys_for_clip(cid)

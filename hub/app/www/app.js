@@ -53,7 +53,7 @@ document.querySelectorAll("nav .nav[data-view]").forEach(a=>a.onclick=()=>{
   document.querySelectorAll("nav .nav").forEach(n=>n.classList.remove("active"));
   a.classList.add("active");render(a.dataset.view);
 });
-$("#lockbtn").onclick=async()=>{try{await jpost("api/logout",{});}catch(e){}showAuth();};
+$("#lockbtn").onclick=async()=>{try{await jpost("api/logout",{});}catch(e){}boot();};
 $("#auth_go").onclick=doAuth;
 ["auth_pass","auth_pass2"].forEach(id=>$("#"+id).addEventListener("keydown",e=>{if(e.key==="Enter")doAuth();}));
 
@@ -480,6 +480,7 @@ async function viewSettings(m){
       ${fld("Tessie API-Token","s_tessie_api_token","password","",c.tessie_api_token_set?"•••• gesetzt":"")}
       ${fld("BLE Fahrzeug-VIN","s_tesla_ble_vin","text",c.tesla_ble_vin)}
       <div class="saverow"><button class="btn sm ghost" id="blepair">BLE koppeln</button><span class="note" id="blemsg"></span></div>
+      <div class="note warn">⚠ Sicherheitshinweis: Der beim Koppeln erzeugte Schlüssel bekommt vom Auto vollen "Owner"-Zugriff (entriegeln, Kofferraum, Fahrfreigabe usw.) — auch wenn dieser Hub ihn selbst nur zum Sentry-Modus umschalten und Ladeport schließen benutzt. Der private Schlüssel liegt unverschlüsselt als Datei auf dem Stick (<code>/root/.ble/key_private.pem</code>); wer physischen Zugriff auf den Stick bekommt, könnte ihn kopieren und (nur in Bluetooth-Reichweite des Autos) für echte Auto-Befehle missbrauchen. Empfehlung: <b>PIN-to-Drive</b> im Auto aktivieren (verhindert Wegfahren trotz gestohlenem Schlüssel) und bei Verlust/Diebstahl des Sticks den BLE-Schlüssel sofort in der Tesla-App entfernen.</div>
     </div>
     <div class="card"><h3>Benachrichtigungen</h3>
       ${chk("Pushover aktiv","s_pushover_enabled",c.pushover_enabled==='true')}
@@ -515,8 +516,17 @@ async function viewSettings(m){
       <div class="note">Gelöscht wird nur, was bereits auf dem NAS gesichert ist.</div>
     </div>
     <div class="card"><h3>Sicherheit & System</h3>
+      <div class="note">Grundprinzip: der Stick soll bei Diebstahl wertlos sein. Entschlüsselungs-Schlüssel und Tesla-Token liegen nie unverschlüsselt auf dem Stick, sondern nur verschlüsselt im Tresor; das eigentliche Video wird beim Ansehen nur kurz im RAM entschlüsselt, nie dauerhaft gespeichert. Die beiden Einstellungen unten sichern die zwei verbleibenden Angriffsflächen ab: den Fernzugriff (SSH) und den Zustand "Tresor gerade entsperrt".</div>
       ${chk("SSH-Passwort-Login abschalten","s_ssh_disable_password",c.ssh_disable_password==='true')}
+      <div class="note">Warum: ohne das ist SSH per Passwort aus dem ganzen (W)LAN erreichbar und damit anfällig für automatisiertes Passwort-Raten. Mit Häkchen ist nur noch Login per SSH-Schlüssel möglich. <b>Achtung:</b> vorher unbedingt einen eigenen SSH-Schlüssel auf dem Pi hinterlegen (<code>~/.ssh/authorized_keys</code>) — sonst sperrst du dich selbst aus SSH aus und kommst nur noch per Bildschirm+Tastatur direkt am Pi wieder rein.</div>
       ${fld("Tresor automatisch sperren nach (Min, 0=aus)","s_vault_autolock_min","number",c.vault_autolock_min)}
+      <div class="note">Warum: der Tresor hält Schlüssel/Token nur entschlüsselt im RAM, solange er offen ist. Je länger er offen bleibt (z. B. weil du das Browser-Tab offen gelassen hast), desto länger könnte jemand mit Zugriff auf das laufende Gerät diese Klartext-Schlüssel im Speicher abgreifen. Automatisches Sperren nach Inaktivität begrenzt dieses Zeitfenster.</div>
+      <div class="saverow" style="flex-wrap:wrap;gap:10px 16px">
+        <input id="s_pw_old" type="password" placeholder="aktuelles Passwort" style="flex:1;min-width:160px;padding:10px 12px;background:var(--bg2);border:1px solid var(--line);border-radius:10px;color:var(--text)">
+        <input id="s_pw_new" type="password" placeholder="neues Passwort" style="flex:1;min-width:160px;padding:10px 12px;background:var(--bg2);border:1px solid var(--line);border-radius:10px;color:var(--text)">
+        <button class="btn sm ghost" id="pwchange">Tresor-Passwort ändern</button>
+      </div>
+      <div class="note" id="pwmsg"></div>
       ${fld("Zeitzone","s_time_zone","text",c.time_zone,"Europe/Berlin")}
       ${fld("Hostname","s_teslausb_hostname","text",c.teslausb_hostname)}
     </div>
@@ -540,6 +550,15 @@ async function viewSettings(m){
   $("#nastest").onclick=async()=>{$("#nasmsg").textContent="Teste…";
     const r=await jget("api/nas/test");$("#nasmsg").textContent=r.ok?("✓ OK"+(r.writable?" (schreibbar)":" (nur lesbar)")):("✗ "+(r.error||"Fehler"));};
   $("#blepair").onclick=async()=>{$("#blemsg").textContent="Koppeln…";const r=await jpost("api/ble/pair",{});$("#blemsg").textContent=r.ok?"✓ ok":"✗ Fehler";};
+  $("#pwchange").onclick=async()=>{
+    const oldp=$("#s_pw_old").value,newp=$("#s_pw_new").value;
+    if(!oldp||!newp){$("#pwmsg").textContent="✗ bitte beide Felder ausfüllen";return;}
+    if(newp.length<8){$("#pwmsg").textContent="✗ neues Passwort sollte mind. 8 Zeichen haben";return;}
+    $("#pwmsg").textContent="ändere…";
+    const r=await jpost("api/vault/change_pass",{old:oldp,new:newp});
+    if(r.ok){$("#pwmsg").textContent="✓ Passwort geändert";$("#s_pw_old").value="";$("#s_pw_new").value="";toast("Tresor-Passwort geändert");}
+    else{$("#pwmsg").textContent="✗ "+(r.error||"Fehler");}
+  };
   $("#mediasync").onclick=async()=>{
     const p=$("#s_sync_media_path").value.trim();
     if(!p){$("#mediasyncmsg").textContent="✗ bitte zuerst Sync-Pfad eintragen";return;}

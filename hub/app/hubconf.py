@@ -96,6 +96,8 @@ def read_settings():
         share = (out.get("share_name") or "").split("/")[0]
         if share:
             out["sync_media_path"] = share + "/Sonstiges"
+    if not out.get("vault_autolock_min"):
+        out["vault_autolock_min"] = "180"
     return out
 
 
