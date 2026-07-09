@@ -85,6 +85,10 @@ def read_settings():
             out[field + "_set"] = _isset(var)
         else:
             out[field] = getval(var)
+    if not out.get("sync_media_path"):
+        share = (out.get("share_name") or "").split("/")[0]
+        if share:
+            out["sync_media_path"] = share + "/Sonstiges"
     return out
 
 
