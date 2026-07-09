@@ -484,10 +484,12 @@ async function viewSettings(m){
       ${fld("Telegram Bot-Token","s_telegram_bot_token","password","",c.telegram_bot_token_set?"•••• gesetzt":"")}
     </div>
     <div class="card"><h3>Aufbewahrung & Sync</h3>
-      ${chk("Music/LightShow/Boombox automatisch bei WLAN synchronisieren","s_sync_all_content",c.sync_all_content==='true')}
+      <div class="note"><b>Kamera-Aufnahmen:</b> laufen über die normale teslausb-Archivierung (siehe „Verbindung / NAS" oben) und werden <b>nur in eine Richtung</b> übertragen: vom Stick zum NAS. Danach werden sie vom Stick entfernt, um Platz zu schaffen. Es kommt nichts vom NAS zurück.</div>
+      <div class="note" style="margin-bottom:14px"><b>Music/LightShow/Boombox:</b> laufen über ein separates Verfahren und werden <b>in beide Richtungen</b> abgeglichen: Änderungen auf dem NAS (z. B. dort hinzugefügte Musik) werden auf den Stick übertragen, und Änderungen auf dem Stick zum NAS. Gelöscht wird dabei nirgends automatisch — eine auf einer Seite entfernte Datei bleibt auf der anderen Seite bestehen.</div>
+      ${chk("Music/LightShow/Boombox automatisch bei WLAN synchronisieren (beidseitig)","s_sync_all_content",c.sync_all_content==='true')}
       ${fld("Sync-Pfad auf dem NAS","s_sync_media_path","text",c.sync_media_path,"Tesla_Video/Sonstiges")}
       <div class="note">Erster Teil (vor dem ersten <code>/</code>) muss ein bereits vorhandener Freigabename auf dem NAS sein (z. B. <code>Tesla_Video</code>, gleicher Server/Zugang wie oben bei „Verbindung / NAS"). Alles danach (z. B. <code>Sonstiges</code>) sowie die Ordner <code>Music/</code>, <code>LightShow/</code>, <code>Boombox/</code> werden automatisch angelegt, falls sie noch nicht existieren. „Jetzt synchronisieren" speichert den Pfad automatisch mit.</div>
-      <div class="saverow"><button class="btn sm ghost" id="mediasync">Jetzt synchronisieren</button><span class="note" id="mediasyncmsg"></span></div>
+      <div class="saverow"><button class="btn sm ghost" id="mediasync">Jetzt synchronisieren (beidseitig)</button><span class="note" id="mediasyncmsg"></span></div>
       <div class="field"><label>Aufnahmen auf dem Stick löschen</label>
         <select id="s_retention_mode">
           <option value="off"${c.retention_mode==='off'||!c.retention_mode?' selected':''}>Aus</option>

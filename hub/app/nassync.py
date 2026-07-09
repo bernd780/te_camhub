@@ -1,12 +1,23 @@
 """
-NAS archive coverage + per-clip key sidecar sync for the Hub.
+NAS sync for the Hub -- two deliberately different procedures:
+
+  1. Camera clips (EncryptedClips): ONE-WAY, stick -> NAS only. This is
+     teslausb's own archiveloop/archive-clips.sh, not this module -- it
+     moves clips off the stick permanently (frees space) and never pulls
+     anything back down. refresh_status()/push_key_sidecars() below only
+     *observe* that process (coverage %, key sidecars); they don't drive it.
+  2. Music/LightShow/Boombox: TWO-WAY, via sync_media(). Pulls NAS-side
+     changes down to the stick, then pushes stick-side changes up, so e.g.
+     a song added directly on the NAS appears on the stick too, and vice
+     versa. Neither direction deletes -- removing a file on one side leaves
+     it untouched on the other.
 
 ARCHIVE_SERVER/SHARE_NAME already point directly at the same TeslaCam/
 EncryptedClips folder that teslausb's own archiveloop writes to, so local and
 remote relative paths line up 1:1 -- no basename/size guessing needed, unlike
 the old decrypt-viewer/retention.sh approach.
 
-Two independent jobs, both driven by nas_sync_loop() in server.py:
+Camera-clip-observing jobs, both driven by nas_sync_loop() in server.py:
   - refresh_status(): mounts read-only, compares local vs. remote clip
     (folder+timestamp) groups -> cached coverage percentage.
   - push_key_sidecars(): for every local clip whose FEK is already in the
@@ -178,10 +189,25 @@ def _media_mount(mnt, rw):
     return subpath
 
 
+def _rsync(src, dst, errors, label):
+    r = subprocess.run(
+        ["rsync", "-rt", "--no-perms", "--no-owner", "--no-group", src + "/", dst + "/"],
+        capture_output=True, text=True, timeout=1800)
+    if r.returncode != 0:
+        errors.append(f"{label}: {(r.stderr or '').splitlines()[-1][:200] if r.stderr else 'rsync-Fehler'}")
+        return False
+    return True
+
+
 def sync_media():
-    """rsync Music/LightShow/Boombox (already locally mounted rw by teslausb's
-    own autofs under FS_BASE) to a configurable NAS path, auto-creating the
-    subpath and one subfolder per partition there."""
+    """Two-way sync of Music/LightShow/Boombox between the stick (already
+    locally mounted rw by teslausb's own autofs under FS_BASE) and a
+    configurable NAS path, auto-creating the subpath and one subfolder per
+    partition there. Unlike the camera-clip archive (one-way, stick -> NAS
+    only, teslausb's own mechanism), this pulls NAS-side changes down to the
+    stick first, then pushes stick-side changes up -- so e.g. music added
+    directly on the NAS shows up on the stick too. Neither direction ever
+    deletes: files removed on one side simply stay on the other."""
     mnt = "/tmp/hub_nas_media"
     _op_lock.acquire()
     try:
@@ -201,12 +227,9 @@ def sync_media():
                 continue
             dest_dir = os.path.join(base, root_name)
             os.makedirs(dest_dir, exist_ok=True)
-            r = subprocess.run(
-                ["rsync", "-rt", "--no-perms", "--no-owner", "--no-group", local_dir + "/", dest_dir + "/"],
-                capture_output=True, text=True, timeout=1800)
-            if r.returncode != 0:
-                errors.append(f"{root_name}: {(r.stderr or '').splitlines()[-1][:200] if r.stderr else 'rsync-Fehler'}")
-            else:
+            ok_pull = _rsync(dest_dir, local_dir, errors, root_name + " (NAS->Stick)")
+            ok_push = _rsync(local_dir, dest_dir, errors, root_name + " (Stick->NAS)")
+            if ok_pull and ok_push:
                 copied += 1
     finally:
         _umount(mnt)
