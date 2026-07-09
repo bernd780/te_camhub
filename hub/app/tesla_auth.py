@@ -54,8 +54,16 @@ class TeslaAuth:
         code = q.get("code", [None])[0]
         state = q.get("state", [None])[0]
         pending = self._pending.pop(state, None) if state else None
+        if not pending and len(self._pending) == 1:
+            # Tesla's login flow sometimes routes through an extra "issuer"
+            # (federation) hop and comes back with a different state than we
+            # sent -- harmless here (single local admin, URL is hand-pasted
+            # from the user's own already-authenticated browser), so fall
+            # back to the one attempt actually in flight.
+            only_state = next(iter(self._pending))
+            pending = self._pending.pop(only_state)
         if not pending:
-            raise RuntimeError("state mismatch (Login-Link abgelaufen oder erneut angefordert -- bitte neu einloggen)")
+            raise RuntimeError("state mismatch (Login-Link abgelaufen, mehrfach angefordert, oder Dienst neu gestartet -- bitte neu einloggen)")
         verifier, _created = pending
         if not code:
             raise RuntimeError("no code in the URL")
