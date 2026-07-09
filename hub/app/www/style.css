@@ -141,6 +141,17 @@ h2.title{margin:2px 0 18px;font-size:22px;font-weight:700}
 .lightbox{position:fixed;inset:0;background:#000d;z-index:70;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:20px}
 .lightbox img{max-width:92%;max-height:82%;object-fit:contain;background:#222;border-radius:8px;box-shadow:var(--shadow)}
 .lightbox .cap{color:#fff}
+.audiobar{position:fixed;left:0;right:0;bottom:0;z-index:80;display:flex;align-items:center;gap:10px;
+  background:var(--card);border-top:1px solid var(--line);box-shadow:var(--shadow);
+  padding:10px 14px calc(10px + env(safe-area-inset-bottom,0px)) 14px}
+.audiobar .ic{font-size:18px}
+.audiobar .cap{flex:0 1 auto;max-width:30%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;color:var(--muted)}
+.audiobar audio{flex:1;height:36px;min-width:0}
+.audiobar .x{background:none;border:none;color:var(--muted);font-size:18px;cursor:pointer;padding:4px}
+@media(max-width:760px){
+  .audiobar{bottom:64px}
+  .audiobar .cap{max-width:22%}
+}
 
 /* ---------- forms ---------- */
 .field{margin:10px 0}

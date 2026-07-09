@@ -320,8 +320,15 @@ class H(BaseHTTPRequestHandler):
             if not full:
                 return self._json(404, {"error": "not found"})
             name = os.path.basename(full)
-            ct = "image/jpeg" if name.lower().endswith((".jpg", ".jpeg")) else \
-                 "image/png" if name.lower().endswith(".png") else "application/octet-stream"
+            nl = name.lower()
+            ct = ("image/jpeg" if nl.endswith((".jpg", ".jpeg")) else
+                  "image/png" if nl.endswith(".png") else
+                  "audio/mpeg" if nl.endswith(".mp3") else
+                  "audio/wav" if nl.endswith(".wav") else
+                  "audio/mp4" if nl.endswith(".m4a") else
+                  "audio/ogg" if nl.endswith(".ogg") else
+                  "audio/flac" if nl.endswith(".flac") else
+                  "audio/aac" if nl.endswith(".aac") else "application/octet-stream")
             disp = None if self._qs("inline") else {"Content-Disposition": f'attachment; filename="{name}"'}
             return self._sendfile(full, ct, disp)
         if path == "/api/log":
@@ -395,6 +402,12 @@ class H(BaseHTTPRequestHandler):
             filemod.rename(body.get("path", ""), body.get("name", "")); return self._json(200, {"ok": True})
         if path == "/api/files/move":
             filemod.move(body.get("path", ""), body.get("dest", "")); return self._json(200, {"ok": True})
+        if path == "/api/files/lockchime":
+            try:
+                filemod.set_lockchime(body.get("path", ""))
+                return self._json(200, {"ok": True})
+            except Exception as e:
+                return self._json(400, {"ok": False, "error": str(e)})
         if path == "/api/reboot":
             return self._json(200, diag.reboot())
         if path == "/api/toggle_drives":

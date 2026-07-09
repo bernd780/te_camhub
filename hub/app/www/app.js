@@ -366,15 +366,23 @@ async function viewFiles(m,path){
   (data.entries||[]).sort((a,b)=>(b.dir-a.dir)||a.name.localeCompare(b.name)).forEach(ent=>{
     const it=el("div","fitem");
     const rel=(path?path+"/":"")+ent.name;
-    it.append(el("div","ic",ent.dir?"📁":ent.image?"🖼️":"📄"));
+    it.append(el("div","ic",ent.dir?"📁":ent.image?"🖼️":ent.audio?"🎵":"📄"));
     const nm=el("div","nm",ent.name);it.append(nm);
     it.append(el("div","sz",ent.dir?"":human(ent.size)));
     const act=el("div","act");
     if(!ent.dir){const dl=el("button","iconbtn","⬇️");dl.title="Download";dl.onclick=e=>{e.stopPropagation();location.href="api/files/download?path="+encodeURIComponent(rel);};act.append(dl);}
+    if(ent.audio&&rel.replace(/\\/g,"/").startsWith("Boombox/")){
+      const lc=el("button","iconbtn","🔔");lc.title="Als LockChime festlegen (überschreibt Boombox/LockChime.wav)";
+      lc.onclick=async e=>{e.stopPropagation();if(confirm("„"+ent.name+"“ als LockChime festlegen? Überschreibt Boombox/LockChime.wav.")){
+        const r=await jpost("api/files/lockchime",{path:rel});
+        if(r.ok){toast("LockChime gesetzt: "+ent.name);viewFiles($("#main"),path);}else{toast("✗ "+(r.error||"Fehler"));}
+      }};
+      act.append(lc);
+    }
     const rn=el("button","iconbtn","✏️");rn.title="Umbenennen";rn.onclick=async e=>{e.stopPropagation();const n=prompt("Neuer Name",ent.name);if(n){await jpost("api/files/rename",{path:rel,name:n});viewFiles($("#main"),path);}};
     const del=el("button","iconbtn","🗑️");del.title="Löschen";del.onclick=async e=>{e.stopPropagation();if(confirm("Löschen: "+ent.name+"?")){await jpost("api/files/delete",{path:rel});viewFiles($("#main"),path);}};
     act.append(rn,del);it.append(act);
-    it.onclick=()=>{if(ent.dir)viewFiles($("#main"),rel);else if(ent.image)lightbox(rel,ent.name);};
+    it.onclick=()=>{if(ent.dir)viewFiles($("#main"),rel);else if(ent.image)lightbox(rel,ent.name);else if(ent.audio)audioPlayer(rel,ent.name);};
     list.append(it);
   });
   mk.onclick=async()=>{const n=prompt("Ordnername");if(n){await jpost("api/files/mkdir",{path:(path?path+"/":"")+n});viewFiles($("#main"),path);}};
@@ -393,6 +401,17 @@ function lightbox(rel,name){
   lb.onclick=e=>{if(e.target===lb)lb.remove();};
   document.addEventListener("keydown",function esc(e){if(e.key==="Escape"){lb.remove();document.removeEventListener("keydown",esc);}});
   document.body.append(lb);
+}
+function audioPlayer(rel,name){
+  document.querySelectorAll(".audiobar").forEach(x=>x.remove());
+  const bar=el("div","audiobar");
+  bar.innerHTML=`<span class="ic">🎵</span><span class="cap"></span>
+    <audio controls autoplay></audio>
+    <button class="x">✕</button>`;
+  bar.querySelector(".cap").textContent=name;
+  bar.querySelector("audio").src="api/files/download?inline=1&path="+encodeURIComponent(rel);
+  bar.querySelector(".x").onclick=()=>bar.remove();
+  document.body.append(bar);
 }
 function human(b){b=+b||0;const u=["B","KB","MB","GB"];let i=0;while(b>=1024&&i<3){b/=1024;i++;}return b.toFixed(i?1:0)+" "+u[i];}
 

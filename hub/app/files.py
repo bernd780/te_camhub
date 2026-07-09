@@ -8,6 +8,7 @@ import os, shutil
 
 FS_BASE = "/var/www/html/fs"   # teslausb mounts Music/LightShow/Boombox here
 IMAGE_EXT = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp")
+AUDIO_EXT = (".mp3", ".wav", ".m4a", ".ogg", ".flac", ".aac")
 # The partitions are indirect autofs mounts: they only appear once accessed, so
 # a listdir of FS_BASE shows nothing. Probe the known names instead.
 KNOWN_ROOTS = ("Music", "LightShow", "Boombox")
@@ -49,7 +50,8 @@ def listdir(rel):
             except OSError:
                 sz = 0
             entries.append({"name": nm, "dir": isdir, "size": sz,
-                            "image": (not isdir) and nm.lower().endswith(IMAGE_EXT)})
+                            "image": (not isdir) and nm.lower().endswith(IMAGE_EXT),
+                            "audio": (not isdir) and nm.lower().endswith(AUDIO_EXT)})
     except FileNotFoundError:
         return None
     return entries
@@ -86,6 +88,21 @@ def move(rel, destdir):
     if not os.path.isdir(dest):
         raise ValueError("dest not a dir")
     shutil.move(full, os.path.join(dest, os.path.basename(full)))
+
+
+def set_lockchime(rel):
+    """Copy a chime file onto Boombox/LockChime.wav -- the exact file the car
+    plays on lock/unlock -- overwriting it. Source must live under Boombox/."""
+    rel_norm = (rel or "").replace("\\", "/").lstrip("/")
+    if not rel_norm.startswith("Boombox/"):
+        raise ValueError("Quelle muss im Boombox-Ordner liegen")
+    full = _safe(rel)
+    if not os.path.isfile(full):
+        raise ValueError("Datei nicht gefunden")
+    dest = _safe("Boombox/LockChime.wav")
+    tmp = dest + ".tmp"
+    shutil.copyfile(full, tmp)
+    os.replace(tmp, dest)
 
 
 def save_upload(destrel, filename, fileobj):
