@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>TeslaCam Hub</title>
+<link rel="stylesheet" href="static/style.css">
+</head>
+<body>
+
+<!-- auth / setup -->
+<div id="auth">
+  <div class="authcard">
+    <div class="logo">🚗</div>
+    <h1 id="auth_title">TeslaCam Hub</h1>
+    <p id="auth_sub">Bitte anmelden.</p>
+    <input type="password" id="auth_pass" placeholder="Passwort" autocomplete="current-password">
+    <input type="password" id="auth_pass2" placeholder="Passwort wiederholen" class="hidden" autocomplete="new-password">
+    <label class="row hidden" id="auth_import_l"><input type="checkbox" id="auth_import" checked> vorhandene Schlüssel importieren</label>
+    <button class="btn primary" id="auth_go">Anmelden</button>
+    <div class="msg" id="auth_msg"></div>
+  </div>
+</div>
+
+<!-- app shell -->
+<div id="app" class="hidden">
+  <nav class="side">
+    <div class="brand"><span class="dot"></span> TeslaCam&nbsp;Hub</div>
+    <a class="nav active" data-view="clips"><span class="ic">🎬</span> Aufnahmen</a>
+    <a class="nav" data-view="files"><span class="ic">📁</span> Dateien</a>
+    <a class="nav" data-view="diag"><span class="ic">📊</span> Diagnose</a>
+    <a class="nav" data-view="settings"><span class="ic">⚙️</span> Einstellungen</a>
+    <div class="spacer"></div>
+    <a class="nav" id="lockbtn"><span class="ic">🔒</span> Sperren</a>
+    <div class="foot"><a href="http://%HOST%:8080/" target="_blank">Erweitert (Alt-UI)</a></div>
+  </nav>
+  <main id="main"></main>
+</div>
+
+<div id="toast"></div>
+<script src="static/app.js"></script>
+</body>
+</html>

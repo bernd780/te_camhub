@@ -1,0 +1,173 @@
+"""
+Config access for the TeslaCam Hub: read/write the teslausb setup variables
+file safely (allowlist + shell-safe single-quote escaping), plus a NAS/CIFS
+connection test. Runs as root (systemd), so it can remount / rw for writes.
+"""
+import os, re, subprocess, tempfile
+
+CONF = "/root/teslausb_setup_variables.conf"
+
+# Fields the UI may edit -> conf variable name. Anything not here is ignored,
+# so the browser can never inject an arbitrary variable/line.
+FIELD_MAP = {
+    # NAS / archive
+    "archive_server": "ARCHIVE_SERVER",
+    "share_name": "SHARE_NAME",
+    "share_user": "SHARE_USER",
+    "share_password": "SHARE_PASSWORD",
+    "cifs_version": "CIFS_VERSION",
+    "archive_recentclips": "ARCHIVE_RECENTCLIPS",
+    "archive_savedclips": "ARCHIVE_SAVEDCLIPS",
+    "archive_sentryclips": "ARCHIVE_SENTRYCLIPS",
+    "archive_trackmodeclips": "ARCHIVE_TRACKMODECLIPS",
+    # network
+    "ssid": "SSID",
+    "wifipass": "WIFIPASS",
+    "ap_ssid": "AP_SSID",
+    "ap_pass": "AP_PASS",
+    "ap_ip": "AP_IP",
+    # keep-awake
+    "teslafi_api_token": "TESLAFI_API_TOKEN",
+    "tessie_api_token": "TESSIE_API_TOKEN",
+    "tessie_vin": "TESSIE_VIN",
+    "tesla_ble_vin": "TESLA_BLE_VIN",
+    # notifications (a common subset)
+    "pushover_enabled": "PUSHOVER_ENABLED",
+    "pushover_user_key": "PUSHOVER_USER_KEY",
+    "pushover_app_key": "PUSHOVER_APP_KEY",
+    "telegram_enabled": "TELEGRAM_ENABLED",
+    "telegram_chat_id": "TELEGRAM_CHAT_ID",
+    "telegram_bot_token": "TELEGRAM_BOT_TOKEN",
+    # system
+    "time_zone": "TIME_ZONE",
+    "teslausb_hostname": "TESLAUSB_HOSTNAME",
+    "snapshot_interval": "SNAPSHOT_INTERVAL",
+    "archive_delay": "ARCHIVE_DELAY",
+    # hub features
+    "sync_all_content": "SYNC_ALL_CONTENT",
+    "retention_mode": "RETENTION_MODE",
+    "retention_days": "RETENTION_DAYS",
+    "retention_free_gb": "RETENTION_FREE_GB",
+    "vault_autolock_min": "VAULT_AUTOLOCK_MIN",
+    "ssh_disable_password": "SSH_DISABLE_PASSWORD",
+    "viewer_extra_roots": "VIEWER_EXTRA_ROOTS",
+}
+BOOLS = {"archive_recentclips", "archive_savedclips", "archive_sentryclips",
+         "archive_trackmodeclips", "pushover_enabled", "telegram_enabled",
+         "sync_all_content", "ssh_disable_password"}
+INTS = {"snapshot_interval", "archive_delay", "retention_days",
+        "retention_free_gb", "vault_autolock_min"}
+SECRETS = {"share_password", "wifipass", "ap_pass", "teslafi_api_token",
+           "tessie_api_token", "pushover_user_key", "pushover_app_key",
+           "telegram_bot_token"}  # returned only as *_set, never in clear
+
+
+def getval(name):
+    try:
+        with open(CONF, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                if line.startswith("export " + name + "="):
+                    v = line[len("export " + name + "="):].strip()
+                    if len(v) >= 2 and v[0] in "'\"" and v[-1] == v[0]:
+                        v = v[1:-1]
+                    return v
+    except Exception:
+        pass
+    return ""
+
+
+def read_settings():
+    """Return the full editable config as a dict; secrets masked to *_set."""
+    out = {}
+    for field, var in FIELD_MAP.items():
+        if field in SECRETS:
+            out[field + "_set"] = _isset(var)
+        else:
+            out[field] = getval(var)
+    return out
+
+
+def _isset(var):
+    try:
+        with open(CONF, encoding="utf-8", errors="replace") as f:
+            return any(l.startswith("export " + var + "=") for l in f)
+    except Exception:
+        return False
+
+
+def write_settings(values: dict):
+    """Apply an incoming {field: value} dict. Returns (ok, error)."""
+    updates = []
+    for field, raw in values.items():
+        if field not in FIELD_MAP:
+            continue
+        var = FIELD_MAP[field]
+        if field in SECRETS and (raw is None or raw == ""):
+            continue  # blank secret => leave unchanged
+        val = "" if raw is None else str(raw)
+        if field in BOOLS:
+            val = "true" if val in ("true", "1", "on", "True") else "false"
+        elif field in INTS:
+            if val and not re.fullmatch(r"\d+", val):
+                return False, f"{field} muss eine Zahl sein"
+        elif field == "retention_mode":
+            if val not in ("off", "time", "space", ""):
+                return False, "retention_mode ungültig"
+        esc = "'" + val.replace("'", "'\\''") + "'"
+        updates.append((var, "export %s=%s" % (var, esc)))
+    if not updates:
+        return True, None
+
+    subprocess.run(["mount", "/", "-o", "remount,rw"], capture_output=True)
+    try:
+        with open(CONF, encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
+        for var, newline in updates:
+            found = False
+            for i, l in enumerate(lines):
+                if l.startswith("export " + var + "="):
+                    lines[i] = newline + "\n"; found = True; break
+            if not found:
+                lines.append(newline + "\n")
+        tmp = CONF + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.writelines(lines)
+        os.replace(tmp, CONF)
+    finally:
+        subprocess.run(["mount", "/", "-o", "remount,ro"], capture_output=True)
+    return True, None
+
+
+def test_nas(server=None, share=None, user=None, password=None):
+    """Try a temporary CIFS mount; empty args fall back to stored conf."""
+    server = server or getval("ARCHIVE_SERVER")
+    share = share or getval("SHARE_NAME")
+    user = user or getval("SHARE_USER")
+    password = password or getval("SHARE_PASSWORD")
+    vers = getval("CIFS_VERSION") or "3.0"
+    if not server or not share:
+        return {"ok": False, "error": "Server/Share fehlt"}
+    mnt = "/tmp/hub_nastest"
+    os.makedirs(mnt, exist_ok=True)
+    creds = tempfile.NamedTemporaryFile("w", delete=False)
+    creds.write("username=%s\npassword=%s\n" % (user, password)); creds.close()
+    os.chmod(creds.name, 0o600)
+    writable = False
+    try:
+        r = subprocess.run(["mount", "-t", "cifs", "//%s/%s" % (server, share), mnt,
+                            "-o", "credentials=%s,vers=%s,iocharset=utf8,rw" % (creds.name, vers)],
+                           capture_output=True, text=True, timeout=25)
+        if r.returncode != 0:
+            return {"ok": False, "error": (r.stderr or "Mount fehlgeschlagen").splitlines()[-1][:200]}
+        try:
+            probe = os.path.join(mnt, ".hub_write_test")
+            open(probe, "w").close(); os.remove(probe); writable = True
+        except Exception:
+            writable = False
+        return {"ok": True, "writable": writable}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200]}
+    finally:
+        subprocess.run(["umount", mnt], capture_output=True)
+        try: os.remove(creds.name)
+        except OSError: pass
