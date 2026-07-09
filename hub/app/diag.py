@@ -72,6 +72,41 @@ def ble_pair():
     r = _run(["/var/www/html/cgi-bin/pairBLEkey.sh"], timeout=120)
     return {"ok": bool(r and r.returncode == 0), "raw": (r.stdout if r else "")}
 
+def apply_ap_fallback(enabled, ssid=None, password=None, ap_ip=None):
+    """Toggle 'AP only as fallback when home WiFi is unavailable' mode.
+
+    Enabling: makes sure the TESLAUSB_AP NetworkManager profile exists
+    (creating it via ap-ensure.sh if needed -- requires ssid+password the
+    first time), turns off its autoconnect so it never starts on its own,
+    and enables the watcher timer that brings it up/down based on WLAN
+    connectivity.
+    Disabling: stops the watcher and reverts to teslausb's normal
+    always-on secondary-AP behavior (autoconnect back on, AP started now).
+    """
+    r = subprocess.run(["nmcli", "-t", "-f", "NAME", "c", "show"], capture_output=True, text=True)
+    has_ap = "TESLAUSB_AP" in (r.stdout or "").splitlines()
+
+    if enabled:
+        if not has_ap and not (ssid and password):
+            return {"ok": False, "error": "zuerst Access-Point-SSID und -Passwort eintragen und speichern"}
+        if ssid and password:
+            r = subprocess.run(["bash", "/opt/teslacam-hub/ap-ensure.sh", ssid, password, ap_ip or "192.168.66.1"],
+                                capture_output=True, text=True, timeout=30)
+            if r.returncode != 0:
+                return {"ok": False, "error": (r.stderr or "AP-Einrichtung fehlgeschlagen").strip()[:200]}
+        subprocess.run(["nmcli", "con", "modify", "TESLAUSB_AP", "connection.autoconnect", "no"],
+                        capture_output=True)
+        subprocess.run(["systemctl", "enable", "--now", "teslacam-ap-fallback.timer"], capture_output=True)
+        subprocess.run(["bash", "/opt/teslacam-hub/ap-fallback-watch.sh"], capture_output=True)
+    else:
+        subprocess.run(["systemctl", "disable", "--now", "teslacam-ap-fallback.timer"], capture_output=True)
+        if has_ap:
+            subprocess.run(["nmcli", "con", "modify", "TESLAUSB_AP", "connection.autoconnect", "yes"],
+                            capture_output=True)
+            subprocess.run(["nmcli", "con", "up", "TESLAUSB_AP"], capture_output=True)
+    return {"ok": True}
+
+
 def apply_ssh(disable):
     """Enable/disable SSH password login via a drop-in (audit hardening)."""
     subprocess.run(["mount", "/", "-o", "remount,rw"], capture_output=True)

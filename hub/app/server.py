@@ -393,6 +393,14 @@ class H(BaseHTTPRequestHandler):
             ok, err = hubconf.write_settings(body)
             if ok and "ssh_disable_password" in body:
                 diag.apply_ssh(str(body.get("ssh_disable_password")) in ("true", "True", "1", "on"))
+            if ok and "ap_fallback_only" in body:
+                enabled = str(body.get("ap_fallback_only")) in ("true", "True", "1", "on")
+                cur = hubconf.read_settings()
+                apr = diag.apply_ap_fallback(enabled, ssid=cur.get("ap_ssid"),
+                                              password=body.get("ap_pass") or None, ap_ip=cur.get("ap_ip"))
+                if not apr.get("ok"):
+                    ok = False
+                    err = apr.get("error")
             return self._json(200 if ok else 400, {"ok": ok, "error": err})
         if path == "/api/files/mkdir":
             filemod.mkdir(body.get("path", "")); return self._json(200, {"ok": True})

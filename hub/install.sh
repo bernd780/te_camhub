@@ -60,6 +60,14 @@ systemctl enable teslacam-latest-snapshot.timer
 systemctl start teslacam-latest-snapshot.timer
 systemctl start teslacam-latest-snapshot.service
 
+echo "[hub-install] installing AP-fallback helper + timer (disabled until enabled in Einstellungen)"
+cp "$HUB_SRC/ap-ensure.sh" "$HUB_DST/ap-ensure.sh"
+cp "$HUB_SRC/ap-fallback-watch.sh" "$HUB_DST/ap-fallback-watch.sh"
+chmod +x "$HUB_DST/ap-ensure.sh" "$HUB_DST/ap-fallback-watch.sh"
+cp "$HUB_SRC/teslacam-ap-fallback.service" /etc/systemd/system/teslacam-ap-fallback.service
+cp "$HUB_SRC/teslacam-ap-fallback.timer" /etc/systemd/system/teslacam-ap-fallback.timer
+systemctl daemon-reload
+
 echo "[hub-install] installing systemd unit"
 cp "$HUB_SRC/teslacam-hub.service" /etc/systemd/system/teslacam-hub.service
 systemctl daemon-reload

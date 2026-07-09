@@ -472,6 +472,8 @@ async function viewSettings(m){
       ${fld("WLAN-Passwort","s_wifipass","password","",c.wifipass_set?"•••• unverändert":"")}
       ${fld("Access-Point SSID","s_ap_ssid","text",c.ap_ssid)}
       ${fld("Access-Point Passwort","s_ap_pass","password","",c.ap_pass_set?"•••• unverändert":"")}
+      ${chk("Access Point nur als Fallback (nur aktiv, wenn Heim-WLAN nicht erreichbar ist)","s_ap_fallback_only",c.ap_fallback_only==='true')}
+      <div class="note">Ohne Häkchen läuft der Access Point wie gewohnt dauerhaft parallel zum Heim-WLAN. Mit Häkchen wird er nur eingeschaltet, wenn das Heim-WLAN gerade nicht erreichbar ist (Prüfung alle 30s). Access-Point-SSID und -Passwort müssen dafür gesetzt sein.</div>
     </div>
     <div class="card"><h3>Auto wachhalten / BLE</h3>
       ${fld("TeslaFi API-Token","s_teslafi_api_token","password","",c.teslafi_api_token_set?"•••• gesetzt":"")}
@@ -552,7 +554,7 @@ async function viewSettings(m){
     const secrets=["share_password","wifipass","ap_pass","teslafi_api_token","tessie_api_token",
       "pushover_user_key","pushover_app_key","telegram_bot_token"];
     const bools=["archive_recentclips","archive_savedclips","archive_sentryclips","sync_all_content",
-      "ssh_disable_password","pushover_enabled","telegram_enabled"];
+      "ssh_disable_password","pushover_enabled","telegram_enabled","ap_fallback_only"];
     const body={};
     fields.forEach(f=>body[f]=($("#s_"+f)||{}).value||"");
     secrets.forEach(f=>{const v=($("#s_"+f)||{}).value;if(v)body[f]=v;});

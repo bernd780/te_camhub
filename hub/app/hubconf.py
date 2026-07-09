@@ -26,6 +26,7 @@ FIELD_MAP = {
     "ap_ssid": "AP_SSID",
     "ap_pass": "AP_PASS",
     "ap_ip": "AP_IP",
+    "ap_fallback_only": "AP_FALLBACK_ONLY",
     # keep-awake
     "teslafi_api_token": "TESLAFI_API_TOKEN",
     "tessie_api_token": "TESSIE_API_TOKEN",
@@ -54,7 +55,7 @@ FIELD_MAP = {
     "viewer_extra_roots": "VIEWER_EXTRA_ROOTS",
 }
 BOOLS = {"archive_recentclips", "archive_savedclips", "archive_sentryclips",
-         "archive_trackmodeclips", "pushover_enabled", "telegram_enabled",
+         "archive_trackmodeclips", "pushover_enabled", "telegram_enabled", "ap_fallback_only",
          "sync_all_content", "ssh_disable_password"}
 INTS = {"snapshot_interval", "archive_delay", "retention_days",
         "retention_free_gb", "vault_autolock_min"}
