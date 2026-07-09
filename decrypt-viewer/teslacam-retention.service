@@ -1,6 +1,0 @@
-[Unit]
-Description=Delete on-stick recordings by age/space (NAS-confirmed) per RETENTION_MODE
-
-[Service]
-Type=oneshot
-ExecStart=/bin/bash /opt/teslacam-decryptor/retention.sh

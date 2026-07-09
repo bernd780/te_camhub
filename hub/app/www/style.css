@@ -46,7 +46,6 @@ nav.side a.nav .ic{width:20px;text-align:center;font-size:16px}
 nav.side a.nav:hover{background:var(--card);color:var(--text)}
 nav.side a.nav.active{background:var(--card2);color:var(--text)}
 nav.side .spacer{flex:1}
-nav.side .foot{padding:8px 10px;color:var(--muted);font-size:12px;border-top:1px solid var(--line)}
 main{overflow:auto;padding:22px 26px}
 .topbar{display:none}
 h2.title{margin:2px 0 18px;font-size:22px;font-weight:700}
@@ -176,7 +175,7 @@ h2.title{margin:2px 0 18px;font-size:22px;font-weight:700}
 @media(max-width:760px){
   #app{grid-template-columns:1fr;grid-template-rows:1fr auto}
   nav.side{grid-row:2;flex-direction:row;border-right:none;border-top:1px solid var(--line);padding:6px;gap:2px;overflow-x:auto}
-  nav.side .brand,nav.side .foot,nav.side .spacer{display:none}
+  nav.side .brand,nav.side .spacer{display:none}
   nav.side a.nav{flex-direction:column;gap:3px;font-size:11px;padding:7px 12px;flex:1;min-width:64px;text-align:center;justify-content:center}
   nav.side a.nav .ic{font-size:19px}
   main{padding:16px 14px}

@@ -47,7 +47,6 @@ async function doAuth(){
 /* ---------------- shell ---------------- */
 function startApp(){
   $("#auth").classList.add("hidden");$("#app").classList.remove("hidden");
-  const foot=document.querySelector(".foot a");if(foot)foot.href="http://"+location.hostname+":8080/";
   render("clips");
 }
 document.querySelectorAll("nav .nav[data-view]").forEach(a=>a.onclick=()=>{
@@ -359,7 +358,7 @@ async function viewFiles(m,path){
   const bar=el("div","saverow");
   const up=el("label","btn sm","⬆️ Hochladen");const fin=el("input");fin.type="file";fin.className="hidden";fin.multiple=true;up.append(fin);
   const mk=el("button","btn sm ghost","➕ Ordner");
-  bar.append(up);if(path)bar.append(mk);m.append(bar);
+  if(path)bar.append(up,mk);m.append(bar);
   const list=el("div","filelist");m.append(list);
   function crumbLinks(){
     crumbs.innerHTML="";

@@ -1,7 +1,0 @@
-[Unit]
-Description=Copy extra Tesla content (decrypted/LightShow/Wraps/Boombox/Music) to the NAS
-After=network-online.target
-
-[Service]
-Type=oneshot
-ExecStart=/bin/bash /opt/teslacam-decryptor/sync-to-nas.sh

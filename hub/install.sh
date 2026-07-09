@@ -2,11 +2,12 @@
 # TeslaCam Hub installer.
 #
 # Run as root on a Pi where teslausb's own one-step setup has already
-# completed (i.e. after first boot). Installs the Hub as the primary HTTPS
-# service on 443 (with an 80->443 redirect), moves teslausb's own nginx UI
-# to a fallback port (8080, reachable via the "Erweitert (Alt-UI)" link),
-# and sets up the systemd unit. teslausb's core (gadget/snapshots/archive)
-# is untouched -- this only adds/replaces the web-facing layer.
+# completed (i.e. after first boot). Installs the Hub as the sole HTTPS
+# service on 443 (with an 80->443 redirect) and disables teslausb's own
+# nginx/cgi-bin web UI entirely -- the Hub replaces it, there's no fallback
+# UI anymore. teslausb's core (gadget/snapshots/archive, and the cgi-bin
+# *.sh scripts the Hub itself still shells out to for BLE/drive-toggle) is
+# untouched -- this only turns off the old HTTP-facing layer.
 #
 #   sudo bash hub/install.sh
 #
@@ -16,7 +17,6 @@ HUB_SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HUB_DST=/opt/teslacam-hub
 STATE_DIR=/backingfiles/decrypt-viewer-state
 TLS_DIR=/mutable/tls
-NGINX_CONF=/etc/nginx/sites-available/teslausb.nginx
 
 if [ "$(id -u)" -ne 0 ]; then
   echo "Must run as root (sudo bash hub/install.sh)" >&2
@@ -47,15 +47,8 @@ if [ ! -f "$TLS_DIR/cert.pem" ] || [ ! -f "$TLS_DIR/key.pem" ]; then
     -subj "/CN=$HOST" >/dev/null 2>&1
 fi
 
-if [ -f "$NGINX_CONF" ]; then
-  echo "[hub-install] moving teslausb's own web UI to fallback port 8080"
-  sed -i 's/listen 80 default_server;/listen 8080 default_server;/' "$NGINX_CONF"
-  sed -i 's/listen \[::\]:80 default_server;/listen [::]:8080 default_server;/' "$NGINX_CONF"
-  systemctl restart nginx || true
-else
-  echo "[hub-install] WARNING: $NGINX_CONF not found -- skipping nginx port move" \
-       "(teslausb's own one-step setup may not have run yet)"
-fi
+echo "[hub-install] disabling teslausb's own nginx web UI (Hub replaces it; cgi-bin *.sh files stay on disk, the Hub still shells out to them directly)"
+systemctl disable --now nginx 2>/dev/null || true
 
 echo "[hub-install] installing snapshot-pointer helper + timer"
 cp "$HUB_SRC/update-latest-snapshot.sh" "$HUB_DST/update-latest-snapshot.sh"
@@ -77,6 +70,5 @@ echo "[hub-install] remounting / ro"
 mount / -o remount,ro
 
 echo "[hub-install] done."
-echo "  Primary UI:  https://$(hostname).local/  (or https://<pi-ip>/)"
-echo "  Alt-UI:      http://$(hostname).local:8080/"
+echo "  Primary UI: https://$(hostname).local/  (or https://<pi-ip>/)"
 echo "  First visit sets up the vault (encryption passphrase = login password)."
