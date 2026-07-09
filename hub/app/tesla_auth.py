@@ -34,26 +34,29 @@ class TeslaAuth:
     are kept in RAM only (same process handles url + callback)."""
     def __init__(self, vault):
         self.vault = vault
-        self._pkce = None
+        self._pending = {}   # state -> (verifier, created_at); supports multiple in-flight attempts
 
     def make_login_url(self) -> str:
         verifier = _b64url(secrets.token_bytes(32))
         challenge = _b64url(hashlib.sha256(verifier.encode()).digest())
         state = _b64url(secrets.token_bytes(16))
-        self._pkce = (verifier, state)
+        now = time.time()
+        # drop stale attempts (>15 min) so this dict can't grow unbounded
+        self._pending = {s: v for s, v in self._pending.items() if now - v[1] < 900}
+        self._pending[state] = (verifier, now)
         q = {"client_id": CLIENT_ID, "redirect_uri": REDIRECT, "response_type": "code",
              "scope": SCOPE, "state": state,
              "code_challenge": challenge, "code_challenge_method": "S256"}
         return f"{AUTH}/authorize?" + urllib.parse.urlencode(q)
 
     def exchange_code(self, callback_url: str) -> dict:
-        if not self._pkce:
-            raise RuntimeError("call make_login_url() first")
-        verifier, state = self._pkce
         q = urllib.parse.parse_qs(urllib.parse.urlparse(callback_url).query)
         code = q.get("code", [None])[0]
-        if q.get("state", [None])[0] != state:
-            raise RuntimeError("state mismatch (expired?)")
+        state = q.get("state", [None])[0]
+        pending = self._pending.pop(state, None) if state else None
+        if not pending:
+            raise RuntimeError("state mismatch (Login-Link abgelaufen oder erneut angefordert -- bitte neu einloggen)")
+        verifier, _created = pending
         if not code:
             raise RuntimeError("no code in the URL")
         tok = _post_form(f"{AUTH}/token", {
