@@ -18,7 +18,7 @@ from urllib.parse import urlparse, parse_qs
 from vault import Vault, VaultError
 from viewer import Viewer
 from tesla_auth import TeslaAuth
-import tesla_api, keybridge, hubconf, files as filemod, diag, nassync
+import tesla_api, keybridge, hubconf, files as filemod, diag, nassync, mqtt_ha
 
 WWW = os.path.join(os.path.dirname(os.path.abspath(__file__)), "www")
 
@@ -152,6 +152,34 @@ def nas_sync_loop():
         except Exception as e:
             print("[hub] nas sync:", e, flush=True)
         time.sleep(600)
+
+
+def mqtt_loop():
+    """Publish Hub status to Home Assistant via MQTT Discovery every 30s.
+    No-op (cheap getval() checks only) unless MQTT_ENABLED=true."""
+    while True:
+        try:
+            if hubconf.getval("MQTT_ENABLED") == "true":
+                host = hubconf.getval("MQTT_HOST")
+                if mqtt_ha.ensure_connected(host, hubconf.getval("MQTT_PORT") or 1883,
+                                             hubconf.getval("MQTT_USER"), hubconf.getval("MQTT_PASSWORD")):
+                    counts = VIEWER.counts()
+                    st = diag.status()
+                    nas = nassync.status()
+                    mqtt_ha.publish_state({
+                        "clips": counts.get("clips", 0),
+                        "encrypted": counts.get("encrypted", 0),
+                        "nas_percent": nas.get("percent", 0),
+                        "temp": (st.get("temp") or "").replace("'C", "").strip(),
+                        "wifi_ssid": st.get("wifi_ssid") or "–",
+                        "usb_connected": bool(st.get("gadget_active")),
+                        "vault_unlocked": VAULT.is_unlocked(),
+                    })
+            else:
+                mqtt_ha.disconnect()
+        except Exception as e:
+            print("[hub] mqtt:", e, flush=True)
+        time.sleep(30)
 
 
 def _bulk_worker():
@@ -524,6 +552,7 @@ def main():
     threading.Thread(target=autolock_loop, daemon=True).start()
     threading.Thread(target=key_fetch_loop, daemon=True).start()
     threading.Thread(target=nas_sync_loop, daemon=True).start()
+    threading.Thread(target=mqtt_loop, daemon=True).start()
     if a.redirect80:
         threading.Thread(target=_redirect80, daemon=True).start()
     httpd = ThreadingHTTPServer(("0.0.0.0", a.port), H)

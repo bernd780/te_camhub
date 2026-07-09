@@ -489,6 +489,14 @@ async function viewSettings(m){
       ${fld("Telegram Chat-ID","s_telegram_chat_id","text",c.telegram_chat_id)}
       ${fld("Telegram Bot-Token","s_telegram_bot_token","password","",c.telegram_bot_token_set?"•••• gesetzt":"")}
     </div>
+    <div class="card"><h3>Home Assistant (MQTT)</h3>
+      ${chk("Als Gerät in Home Assistant anmelden","s_mqtt_enabled",c.mqtt_enabled==='true')}
+      ${fld("MQTT-Server (Host)","s_mqtt_host","text",c.mqtt_host,"192.168.1.10")}
+      ${fld("Port","s_mqtt_port","number",c.mqtt_port||1883)}
+      ${fld("Benutzer","s_mqtt_user","text",c.mqtt_user)}
+      ${fld("Passwort","s_mqtt_password","password","",c.mqtt_password_set?"•••• unverändert":"")}
+      <div class="note">Meldet den Hub per MQTT Discovery automatisch als Gerät „TeslaCam Hub" in Home Assistant an (Sensoren: Aufnahmen, verschlüsselte Aufnahmen, NAS-Archivierung %, Pi-Temperatur, WLAN, USB am Auto, Tresor entsperrt). Kein manuelles Einrichten in HA nötig, sofern der MQTT-Integration dort bereits eingerichtet ist.</div>
+    </div>
     <div class="card"><h3>Aufbewahrung & Sync</h3>
       <div class="note"><b>Kamera-Aufnahmen:</b> laufen über die normale teslausb-Archivierung (siehe „Verbindung / NAS" oben) und werden <b>nur in eine Richtung</b> übertragen: vom Stick zum NAS. Danach werden sie vom Stick entfernt, um Platz zu schaffen. Es kommt nichts vom NAS zurück.</div>
       <div class="note" style="margin-bottom:14px"><b>Music/LightShow/Boombox:</b> laufen über ein separates Verfahren und werden <b>in beide Richtungen</b> abgeglichen: Änderungen auf dem NAS (z. B. dort hinzugefügte Musik) werden auf den Stick übertragen, und Änderungen auf dem Stick zum NAS. Gelöscht wird dabei nirgends automatisch — eine auf einer Seite entfernte Datei bleibt auf der anderen Seite bestehen.</div>
@@ -550,11 +558,12 @@ async function viewSettings(m){
   };
   $("#savebtn").onclick=async()=>{
     const fields=["archive_server","share_name","share_user","ssid","ap_ssid","tesla_ble_vin",
-      "telegram_chat_id","retention_days","retention_free_gb","vault_autolock_min","time_zone","teslausb_hostname","sync_media_path"];
+      "telegram_chat_id","retention_days","retention_free_gb","vault_autolock_min","time_zone","teslausb_hostname","sync_media_path",
+      "mqtt_host","mqtt_port","mqtt_user"];
     const secrets=["share_password","wifipass","ap_pass","teslafi_api_token","tessie_api_token",
-      "pushover_user_key","pushover_app_key","telegram_bot_token"];
+      "pushover_user_key","pushover_app_key","telegram_bot_token","mqtt_password"];
     const bools=["archive_recentclips","archive_savedclips","archive_sentryclips","sync_all_content",
-      "ssh_disable_password","pushover_enabled","telegram_enabled","ap_fallback_only"];
+      "ssh_disable_password","pushover_enabled","telegram_enabled","ap_fallback_only","mqtt_enabled"];
     const body={};
     fields.forEach(f=>body[f]=($("#s_"+f)||{}).value||"");
     secrets.forEach(f=>{const v=($("#s_"+f)||{}).value;if(v)body[f]=v;});

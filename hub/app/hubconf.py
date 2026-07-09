@@ -39,6 +39,12 @@ FIELD_MAP = {
     "telegram_enabled": "TELEGRAM_ENABLED",
     "telegram_chat_id": "TELEGRAM_CHAT_ID",
     "telegram_bot_token": "TELEGRAM_BOT_TOKEN",
+    # Home Assistant (MQTT)
+    "mqtt_enabled": "MQTT_ENABLED",
+    "mqtt_host": "MQTT_HOST",
+    "mqtt_port": "MQTT_PORT",
+    "mqtt_user": "MQTT_USER",
+    "mqtt_password": "MQTT_PASSWORD",
     # system
     "time_zone": "TIME_ZONE",
     "teslausb_hostname": "TESLAUSB_HOSTNAME",
@@ -56,12 +62,12 @@ FIELD_MAP = {
 }
 BOOLS = {"archive_recentclips", "archive_savedclips", "archive_sentryclips",
          "archive_trackmodeclips", "pushover_enabled", "telegram_enabled", "ap_fallback_only",
-         "sync_all_content", "ssh_disable_password"}
+         "sync_all_content", "ssh_disable_password", "mqtt_enabled"}
 INTS = {"snapshot_interval", "archive_delay", "retention_days",
-        "retention_free_gb", "vault_autolock_min"}
+        "retention_free_gb", "vault_autolock_min", "mqtt_port"}
 SECRETS = {"share_password", "wifipass", "ap_pass", "teslafi_api_token",
            "tessie_api_token", "pushover_user_key", "pushover_app_key",
-           "telegram_bot_token"}  # returned only as *_set, never in clear
+           "telegram_bot_token", "mqtt_password"}  # returned only as *_set, never in clear
 
 
 def getval(name):
