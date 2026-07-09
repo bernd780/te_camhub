@@ -45,6 +45,7 @@ FIELD_MAP = {
     "archive_delay": "ARCHIVE_DELAY",
     # hub features
     "sync_all_content": "SYNC_ALL_CONTENT",
+    "sync_media_path": "SYNC_MEDIA_PATH",
     "retention_mode": "RETENTION_MODE",
     "retention_days": "RETENTION_DAYS",
     "retention_free_gb": "RETENTION_FREE_GB",

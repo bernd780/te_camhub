@@ -30,7 +30,11 @@ README_TEXT = (
 
 _guard = threading.Lock()
 _op_lock = threading.Lock()   # serializes mount operations (loop vs. manual refresh)
-_cache = {"t": 0.0, "total": 0, "on_nas": 0, "percent": 0, "ok": None, "error": None}
+_cache = {"t": 0.0, "total": 0, "on_nas": 0, "percent": 0, "ok": None, "error": None, "clips": {}}
+_media_cache = {"t": 0.0, "ok": None, "error": None, "copied": 0}
+
+MEDIA_ROOTS = ("Music", "LightShow", "Boombox")
+FS_BASE = "/var/www/html/fs"
 
 
 def _mount(mnt, rw):
@@ -61,20 +65,24 @@ def _umount(mnt):
 
 
 def _clip_groups(files):
-    """{"folder|timestamp": {cam: relpath}} from a list of relpaths."""
+    """{"folder|timestamp": {cam: relpath}} from a list of relpaths (relpaths
+    are relative to the EncryptedClips folder). The clip id is prefixed with
+    'EncryptedClips' to match Viewer's ids (which are relative to the TeslaCam
+    root one level up), so the frontend can look up nas-sync status by c.id."""
     groups = {}
     for rel in files:
         m = TS_RE.search(os.path.basename(rel))
         if not m:
             continue
         ts, cam = m.group(1), m.group(2).lower()
-        folder = os.path.dirname(rel)
+        sub = os.path.dirname(rel)
+        folder = "EncryptedClips/" + sub if sub else "EncryptedClips"
         groups.setdefault(folder + "|" + ts, {})[cam] = rel
     return groups
 
 
 def refresh_status(scan_dir):
-    """Recompute local-vs-NAS clip coverage. scan_dir = .../TeslaCam"""
+    """Recompute local-vs-NAS clip coverage, per clip. scan_dir = .../TeslaCam"""
     src = os.path.join(scan_dir, "EncryptedClips")
     local = []
     for root, _, names in os.walk(src):
@@ -84,6 +92,7 @@ def refresh_status(scan_dir):
     local_groups = _clip_groups(local)
     total = len(local_groups)
     on_nas = 0
+    clip_status = {}
     err = None
     mnt = "/tmp/hub_nas_status"
     if total:
@@ -96,8 +105,10 @@ def refresh_status(scan_dir):
                         for nm in names:
                             if nm.endswith(".mp4"):
                                 remote.add(os.path.relpath(os.path.join(root, nm), mnt).replace("\\", "/"))
-                    for cams in local_groups.values():
-                        if all(rel in remote for rel in cams.values()):
+                    for ck, cams in local_groups.items():
+                        synced = all(rel in remote for rel in cams.values())
+                        clip_status[ck] = synced
+                        if synced:
                             on_nas += 1
                 finally:
                     _umount(mnt)
@@ -106,13 +117,77 @@ def refresh_status(scan_dir):
     with _guard:
         _cache.update(t=time.time(), total=total, on_nas=on_nas,
                        percent=(round(on_nas * 100 / total) if total else 100),
-                       ok=(err is None), error=err)
+                       ok=(err is None), error=err, clips=clip_status)
     return dict(_cache)
 
 
 def status():
     with _guard:
         return dict(_cache)
+
+
+def media_status():
+    with _guard:
+        return dict(_media_cache)
+
+
+def _media_mount(mnt, rw):
+    server = hubconf.getval("ARCHIVE_SERVER")
+    path = hubconf.getval("SYNC_MEDIA_PATH")
+    user = hubconf.getval("SHARE_USER")
+    password = hubconf.getval("SHARE_PASSWORD")
+    vers = hubconf.getval("CIFS_VERSION") or "3.0"
+    if not server or not path:
+        raise RuntimeError("Sync-Pfad nicht konfiguriert")
+    os.makedirs(mnt, exist_ok=True)
+    creds = tempfile.NamedTemporaryFile("w", delete=False)
+    creds.write("username=%s\npassword=%s\n" % (user, password)); creds.close()
+    os.chmod(creds.name, 0o600)
+    opts = "credentials=%s,vers=%s,iocharset=utf8,%s" % (creds.name, vers, "rw" if rw else "ro")
+    try:
+        r = subprocess.run(["mount", "-t", "cifs", "//%s/%s" % (server, path), mnt,
+                            "-o", opts], capture_output=True, text=True, timeout=25)
+    finally:
+        try: os.remove(creds.name)
+        except OSError: pass
+    if r.returncode != 0:
+        raise RuntimeError((r.stderr or "Mount fehlgeschlagen").splitlines()[-1][:200])
+
+
+def sync_media():
+    """rsync Music/LightShow/Boombox (already locally mounted rw by teslausb's
+    own autofs under FS_BASE) to a configurable NAS path, auto-creating one
+    subfolder per partition there."""
+    mnt = "/tmp/hub_nas_media"
+    _op_lock.acquire()
+    try:
+        _media_mount(mnt, rw=True)
+    except Exception as e:
+        with _guard:
+            _media_cache.update(t=time.time(), ok=False, error=str(e))
+        _op_lock.release()
+        return {"ok": False, "error": str(e)}
+    copied, errors = 0, []
+    try:
+        for root_name in MEDIA_ROOTS:
+            local_dir = os.path.join(FS_BASE, root_name)
+            if not os.path.isdir(local_dir):   # accessing triggers autofs
+                continue
+            dest_dir = os.path.join(mnt, root_name)
+            os.makedirs(dest_dir, exist_ok=True)
+            r = subprocess.run(
+                ["rsync", "-rt", "--no-perms", "--no-owner", "--no-group", local_dir + "/", dest_dir + "/"],
+                capture_output=True, text=True, timeout=1800)
+            if r.returncode != 0:
+                errors.append(f"{root_name}: {(r.stderr or '').splitlines()[-1][:200] if r.stderr else 'rsync-Fehler'}")
+            else:
+                copied += 1
+    finally:
+        _umount(mnt)
+        _op_lock.release()
+    with _guard:
+        _media_cache.update(t=time.time(), ok=not errors, error="; ".join(errors) or None, copied=copied)
+    return {"ok": not errors, "copied": copied, "errors": errors}
 
 
 def push_key_sidecars(scan_dir, vault):

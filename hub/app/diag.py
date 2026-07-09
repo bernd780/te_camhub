@@ -57,8 +57,12 @@ def toggle_drives():
     return {"ok": bool(r and r.returncode == 0)}
 
 def trigger_sync():
-    subprocess.Popen(["/bin/bash", "/opt/teslacam-hub/sync-to-nas.sh"])
-    return {"ok": True}
+    """Force an immediate archive cycle for the camera clips: restarting the
+    teslausb service disconnects+reconnects the USB gadget and runs
+    archiveloop's archive pass right away, instead of waiting for the car
+    to go idle on its own schedule."""
+    r = subprocess.run(["systemctl", "restart", "teslausb"], capture_output=True)
+    return {"ok": r.returncode == 0}
 
 def ble_status():
     r = _run(["/var/www/html/cgi-bin/checkBLEstatus.sh"], timeout=20)

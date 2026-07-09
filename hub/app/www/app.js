@@ -76,12 +76,24 @@ async function viewClips(m){
   const bar=el("div","saverow");
   const bulkbtn=el("button","btn sm","🔓 Alle entschlüsseln + Metadaten erzeugen");
   const bulkmsg=el("span","note","");
-  bar.append(bulkbtn,bulkmsg);m.append(bar);
+  const syncbtn=el("button","btn sm ghost","🔄 Jetzt synchronisieren");
+  const syncmsg=el("span","note","");
+  bar.append(bulkbtn,bulkmsg,syncbtn,syncmsg);m.append(bar);
   const grid=el("div","clipgrid");m.append(grid);
   let clips;try{clips=await jget("api/clips");}catch(e){return;}
   const enc=clips.filter(c=>c.encrypted).length;
   info.textContent=`${clips.length} Clips · ${enc} verschlüsselt`;
+  let nasClips={};try{nasClips=(await jget("api/nas/sync_status")).clips||{};}catch(e){}
   if(!clips.length){info.textContent="Keine Aufnahmen gefunden.";return;}
+  syncbtn.onclick=async()=>{
+    syncbtn.disabled=true;syncmsg.textContent="starte Archivierung…";
+    try{await jpost("api/sync",{});}catch(e){}
+    syncmsg.textContent="Archivierung läuft (Auto trennt kurz die USB-Verbindung)…";
+    setTimeout(async()=>{
+      await jpost("api/nas/sync_status/refresh",{});
+      setTimeout(()=>{syncbtn.disabled=false;syncmsg.textContent="✓ ausgelöst";toast("Sync ausgelöst, Status aktualisiert sich gleich");viewClips(m);},15000);
+    },20000);
+  };
   bulkbtn.onclick=async()=>{
     bulkbtn.disabled=true;bulkmsg.textContent="startet…";
     let st;try{st=await jpost("api/bulk_prepare",{});}catch(e){bulkbtn.disabled=false;bulkmsg.textContent="✗ Fehler";return;}
@@ -109,6 +121,7 @@ async function viewClips(m){
     b.append(el("span","badge "+(c.encrypted?"enc":"plain"),c.encrypted?"🔒 verschlüsselt":"offen"));
     if(c.has_event)b.append(el("span","badge event",c.reason||"Event"));
     if(c.has_locked)b.append(el("span","badge locked","kein Schlüssel"));
+    b.append(el("span","badge "+(nasClips[c.id]?"nasok":"nasno"),nasClips[c.id]?"☁️ auf NAS":"☁️ noch nicht"));
     meta.append(b);card.append(meta);
     card.onclick=()=>openClip(c);
     grid.append(card);
@@ -124,32 +137,213 @@ async function refreshNasStatus(nasrow){
   rl.onclick=async()=>{nasrow.querySelector("span").textContent="NAS-Archiv: prüfe…";await jpost("api/nas/sync_status/refresh",{});setTimeout(()=>refreshNasStatus(nasrow),20000);};
   nasrow.append(rl);
 }
+/* ---------------- Player: synced multi-cam, event-seek, GPS map, HUD ---------------- */
+const CAMS=[["front","Front","a-front"],["back","Heck","a-back"],
+  ["left_repeater","Links","a-left"],["right_repeater","Rechts","a-right"],
+  ["left_pillar","Links (Säule)","a-lp"],["right_pillar","Rechts (Säule)","a-rp"]];
+const REASON_LABELS={
+  user_interaction_dashcam_icon_tapped:"Dashcam-Taste",
+  user_interaction_dashcam_panel_save:"manuell gespeichert",
+  sentry_aware_object_detection:"Sentry: Objekt erkannt",
+  sentry_aware_accel_detection:"Sentry: Erschütterung",
+  sentry_aware_alarm_state:"Sentry: Alarm",
+  honk:"Hupe"};
+let PLAYER={videos:[],master:null,raf:0,tele:null,gpsPts:[],lmap:null,lmark:null,ltrack:null,event:null,initialSeek:null,cid:null};
+
+function pSlaves(fn){PLAYER.videos.forEach(v=>{if(v!==PLAYER.master)fn(v);});}
+function pFmt(t){t=Math.max(0,t||0);const m=Math.floor(t/60),s=Math.floor(t%60);return m+":"+String(s).padStart(2,"0");}
+
+function pClearStage(){
+  cancelAnimationFrame(PLAYER.raf);
+  PLAYER.videos=[];PLAYER.master=null;PLAYER.tele=null;PLAYER.gpsPts=[];
+  PLAYER.lmark=null;PLAYER.ltrack=null;PLAYER.event=null;PLAYER.initialSeek=null;
+  if(PLAYER.lmap){PLAYER.lmap.remove();PLAYER.lmap=null;}
+}
+
+function pEnsureMap(){
+  if(PLAYER.lmap||!window.L)return;
+  PLAYER.lmap=L.map($("#pmap"),{attributionControl:false}).setView([0,0],2);
+  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:19}).addTo(PLAYER.lmap);
+}
+function pDrawTrack(){
+  if(!PLAYER.lmap)return;
+  if(PLAYER.ltrack){PLAYER.lmap.removeLayer(PLAYER.ltrack);PLAYER.ltrack=null;}
+  if(PLAYER.lmark){PLAYER.lmap.removeLayer(PLAYER.lmark);PLAYER.lmark=null;}
+  if(!PLAYER.gpsPts.length)return;
+  PLAYER.ltrack=L.polyline(PLAYER.gpsPts,{color:"#e63946",weight:3}).addTo(PLAYER.lmap);
+  PLAYER.lmark=L.circleMarker(PLAYER.gpsPts[0],{radius:6,color:"#4aa3ff",fillColor:"#4aa3ff",fillOpacity:1}).addTo(PLAYER.lmap);
+  PLAYER.lmap.fitBounds(PLAYER.ltrack.getBounds(),{padding:[20,20]});
+}
+function pShowMap(on){
+  const box=$("#pmapbox");if(!box)return;
+  box.classList.toggle("hidden",!on);
+  if(on){pEnsureMap();pDrawTrack();setTimeout(()=>PLAYER.lmap&&PLAYER.lmap.invalidateSize(),150);}
+}
+function pMapMarker(f){if(PLAYER.lmark&&f&&f.lat&&f.lon)PLAYER.lmark.setLatLng([f.lat,f.lon]);}
+
+function pHud(f){
+  if(!f)return;
+  $("#h-gear").textContent=f.gear||"–";
+  $("#h-spd").textContent=Math.round(Math.abs(f.speed_kmh||0));
+  $("#h-l").classList.toggle("on",!!f.blink_l);
+  $("#h-r").classList.toggle("on",!!f.blink_r);
+  $("#h-accel-fill").style.height=Math.max(0,Math.min(100,(f.accel||0)*10))+"%";
+  $("#h-brake").classList.toggle("on",!!f.brake);
+  $("#h-ap").style.display=(f.autopilot>0)?"flex":"none";
+  const steer=f.steer||0;
+  $("#h-wheel").style.transform="rotate("+steer+"deg)";
+  $("#h-wheel").classList.toggle("on",Math.abs(steer)>3);
+}
+function pNerdLines(f){
+  const l=[];
+  if(f)l.push(`t=${f.t}s v=${(f.speed_kmh||0).toFixed(1)}km/h gear=${f.gear} steer=${(f.steer||0).toFixed(1)}° accel=${(f.accel||0).toFixed(1)} brake=${f.brake} blink=${f.blink_l?"L":""}${f.blink_r?"R":""} ap=${f.autopilot} gps=${f.lat||"–"},${f.lon||"–"} heading=${f.heading||"–"}`);
+  if(PLAYER.event){
+    const e=PLAYER.event;
+    l.push(`Event: ${REASON_LABELS[e.reason]||e.reason||"–"}${e.city?" @ "+e.city+(e.street?" / "+e.street:""):""}${(e.seek!=null)?` (t=${e.seek.toFixed(1)}s)`:""}`);
+  }
+  return l.join("\n");
+}
+
+function pLoop(){
+  const m=PLAYER.master;if(!m)return;
+  const t=m.currentTime;
+  pSlaves(v=>{if(Math.abs(v.currentTime-t)>0.12)v.currentTime=t;});
+  const seekEl=$("#pseek"),timeEl=$("#ptime");
+  if(seekEl&&!seekEl.matches(":active"))seekEl.value=Math.floor(t*1000);
+  if(timeEl)timeEl.textContent=pFmt(t)+" / "+pFmt(m.duration||0);
+  if(PLAYER.tele&&PLAYER.tele.frame_count){
+    const i=Math.min(PLAYER.tele.frame_count-1,Math.max(0,Math.round(t*PLAYER.tele.fps)));
+    const fr=PLAYER.tele.frames[i];
+    if($("#t_hud")&&$("#t_hud").checked)pHud(fr);
+    if($("#t_nerd")&&$("#t_nerd").checked){$("#pnerd").textContent=pNerdLines(fr);$("#pnerd").style.display="block";}
+    else if($("#pnerd"))$("#pnerd").style.display="none";
+    if($("#t_map")&&$("#t_map").checked)pMapMarker(fr);
+  }
+  PLAYER.raf=requestAnimationFrame(pLoop);
+}
+
+function pSetupMaster(){
+  const m=PLAYER.master;if(!m)return;
+  m.onloadedmetadata=()=>{
+    $("#pseek").max=Math.floor((m.duration||0)*1000)||1000;
+    if(PLAYER.initialSeek!=null){m.currentTime=PLAYER.initialSeek;pSlaves(v=>v.currentTime=PLAYER.initialSeek);}
+  };
+  m.onplay=()=>{pSlaves(v=>v.play().catch(()=>{}));$("#pplay").textContent="⏸";PLAYER.raf=requestAnimationFrame(pLoop);};
+  m.onpause=()=>{pSlaves(v=>v.pause());$("#pplay").textContent="▶";cancelAnimationFrame(PLAYER.raf);};
+}
+
+function pUpdateTelControls(c){
+  const hasT=!!(PLAYER.tele&&PLAYER.tele.frame_count);
+  const hasGps=PLAYER.gpsPts.length>0;
+  $("#tc_hud").classList.toggle("hidden",!hasT);
+  $("#tc_nerd").classList.toggle("hidden",!hasT&&!PLAYER.event);
+  $("#tc_map").classList.toggle("hidden",!hasGps);
+  $("#hud").style.display=(hasT&&$("#t_hud").checked)?"flex":"none";
+}
+
 async function openClip(c){
+  pClearStage();
+  PLAYER.cid=c.id;
   const wrap=el("div","player");
-  const bar=el("div","bar",`<b>${c.timestamp.replace("_"," ")}</b>`);
-  const status=el("span","note","Entschlüssele…");bar.append(status);
-  const x=el("button","x","✕");x.onclick=()=>wrap.remove();bar.append(x);
+  const bar=el("div","bar");
+  bar.innerHTML=`<b>${c.timestamp.replace("_"," ")}</b>
+    <span class="note" id="pstatus">lädt…</span>
+    <label class="tc hidden" id="tc_hud"><input type="checkbox" id="t_hud" checked> HUD</label>
+    <label class="tc hidden" id="tc_map"><input type="checkbox" id="t_map"> Karte</label>
+    <label class="tc hidden" id="tc_nerd"><input type="checkbox" id="t_nerd"> Debug</label>
+    <select id="prate" class="ratesel"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select>
+    <button class="btn sm ghost" id="pfull">⛶</button>
+    <button class="x" id="pclose">✕</button>`;
   wrap.append(bar);
-  const grid=el("div","grid");wrap.append(grid);
+  const stage=el("div","stage");
+  const grid=el("div","grid");stage.append(grid);
+  const mapbox=el("div","mapbox hidden");mapbox.id="pmapbox";
+  mapbox.innerHTML=`<div id="pmap"></div>`;stage.append(mapbox);
+  const hud=el("div","hud");hud.id="hud";
+  hud.innerHTML=`
+    <div class="h-item h-turn" id="h-l">◀</div>
+    <div class="h-item h-gear" id="h-gear">–</div>
+    <div class="h-item h-speed"><span id="h-spd">0</span><small>km/h</small></div>
+    <div class="h-item h-wheel" id="h-wheel">🎡</div>
+    <div class="h-item h-accel"><div class="h-accel-fill" id="h-accel-fill"></div></div>
+    <div class="h-item h-brake" id="h-brake">🛑</div>
+    <div class="h-item h-ap" id="h-ap" style="display:none">AP</div>
+    <div class="h-item h-turn" id="h-r">▶</div>`;
+  stage.append(hud);
+  const nerd=el("pre","nerd");nerd.id="pnerd";stage.append(nerd);
+  wrap.append(stage);
+  const transport=el("div","transport");
+  transport.innerHTML=`<button class="btn sm" id="pplay">▶</button>
+    <input type="range" id="pseek" value="0" min="0" max="1000">
+    <span class="note" id="ptime">0:00 / 0:00</span>`;
+  wrap.append(transport);
   document.body.append(wrap);
+  $("#pclose").onclick=()=>{pClearStage();wrap.remove();};
+  document.addEventListener("keydown",function esc(e){
+    if(!document.body.contains(wrap)){document.removeEventListener("keydown",esc);return;}
+    if(e.key==="Escape"){pClearStage();wrap.remove();document.removeEventListener("keydown",esc);}
+    else if(e.key===" "){e.preventDefault();PLAYER.master&&(PLAYER.master.paused?PLAYER.master.play():PLAYER.master.pause());}
+    else if(e.key==="ArrowRight"&&PLAYER.master){PLAYER.master.currentTime+=5;pSlaves(v=>v.currentTime=PLAYER.master.currentTime);}
+    else if(e.key==="ArrowLeft"&&PLAYER.master){PLAYER.master.currentTime-=5;pSlaves(v=>v.currentTime=PLAYER.master.currentTime);}
+  });
+  $("#pfull").onclick=()=>{document.fullscreenElement?document.exitFullscreen():wrap.requestFullscreen();};
+  $("#pplay").onclick=()=>{if(!PLAYER.master)return;PLAYER.master.paused?PLAYER.master.play():PLAYER.master.pause();};
+  $("#pseek").oninput=()=>{if(!PLAYER.master)return;const t=$("#pseek").value/1000;PLAYER.master.currentTime=t;pSlaves(v=>v.currentTime=t);};
+  $("#prate").onchange=()=>{if(!PLAYER.master)return;const r=+$("#prate").value;PLAYER.master.playbackRate=r;pSlaves(v=>v.playbackRate=r);};
+  $("#t_hud").onchange=()=>pUpdateTelControls(c);
+  $("#t_map").onchange=()=>pShowMap($("#t_map").checked);
+
+  // event: fetch event.json seek offset if this clip has one
+  if(c.has_event){
+    try{PLAYER.event=await jget("api/event?id="+encodeURIComponent(c.id));}catch(e){PLAYER.event=null;}
+    if(PLAYER.event&&PLAYER.event.seek!=null)PLAYER.initialSeek=PLAYER.event.seek;
+    if(PLAYER.event&&PLAYER.event.lat&&PLAYER.event.lon)PLAYER.gpsPts=[[PLAYER.event.lat,PLAYER.event.lon]];
+  }
+
+  const status=$("#pstatus");
   let res;
   try{res=await jpost("api/prepare",{id:c.id});}catch(e){status.textContent="✗ Verbindungsfehler";return;}
   if(!res||!res.cameras){status.textContent="✗ "+(res&&res.error?res.error:"Fehler");return;}
   status.remove();
+
   let any=false;
-  const camLabel={front:"Front",left_repeater:"Links",right_repeater:"Rechts",back:"Heck",left_pillar:"Links (Säule)",right_pillar:"Rechts (Säule)"};
-  Object.entries(res.cameras).forEach(([cam,info])=>{
-    if(info.state==="ready"||info.state==="plain"){
-      const v=document.createElement("video");v.controls=true;v.playsInline=true;v.muted=true;
+  CAMS.forEach(([cam,label,area])=>{
+    const info=res.cameras[cam];
+    const tile=el("div","tile "+area);
+    if(info&&(info.state==="ready"||info.state==="plain")){
+      const v=document.createElement("video");v.controls=false;v.playsInline=true;v.muted=true;v.preload="auto";
       v.src=info.url;
-      grid.append(v);any=true;
+      tile.append(v);
+      const ctl=el("div","tilectl");
+      const dl=el("a","iconbtn dlcam","⬇");dl.href=info.url;dl.download=cam+".mp4";dl.title="Kamera herunterladen";
+      const fs=el("button","iconbtn fscam","⛶");fs.title="Vollbild";fs.onclick=(e)=>{e.stopPropagation();(v.requestFullscreen||v.webkitEnterFullscreen||function(){}).call(v);};
+      ctl.append(dl,fs);tile.append(ctl);
+      tile.append(el("div","tilelabel",label));
+      grid.append(tile);
+      PLAYER.videos.push(v);
+      if(!PLAYER.master)PLAYER.master=v;
+      any=true;
     }else{
-      const why=info.state==="locked"?"kein Schlüssel verfügbar":"Fehler beim Entschlüsseln";
-      grid.append(el("div","campending",`<div class="ic">🔒</div><div>${camLabel[cam]||cam}</div><div class="note">${why}</div>`));
+      tile.classList.add("empty");
+      if(info&&info.state==="locked")tile.innerHTML=`<div class="ic">🔒</div><div class="note">${label}</div>`;
+      grid.append(tile);
     }
   });
-  if(!any)grid.append(el("div","note","Kein Video verfügbar – kein Schlüssel für diesen Clip."));
+  if(!any){grid.append(el("div","note","Kein Video verfügbar – kein Schlüssel für diesen Clip."));return;}
   if(res.errors&&res.errors.length)toast("Fehler: "+res.errors.join(", "));
+
+  pSetupMaster();
+
+  // telemetry (HUD/map): prepare() may have just extracted it, so build the
+  // URL directly rather than relying on the (pre-prepare) clip list snapshot
+  const telUrl="media/"+encodeURI(c.folder+"/"+c.timestamp+"-front.telemetry.json");
+  try{const t=await jget(telUrl);if(t&&t.frame_count)PLAYER.tele=t;}catch(e){}
+  if(PLAYER.tele&&PLAYER.tele.frames){
+    const pts=PLAYER.tele.frames.filter(f=>f.lat&&f.lon).map(f=>[f.lat,f.lon]);
+    if(pts.length)PLAYER.gpsPts=pts;
+  }
+  pUpdateTelControls(c);
+  if(PLAYER.gpsPts.length)$("#tc_map").classList.remove("hidden");
 }
 
 /* ---------------- Dateien ---------------- */
@@ -271,7 +465,10 @@ async function viewSettings(m){
       ${fld("Telegram Bot-Token","s_telegram_bot_token","password","",c.telegram_bot_token_set?"•••• gesetzt":"")}
     </div>
     <div class="card"><h3>Aufbewahrung & Sync</h3>
-      ${chk("Alle Inhalte bei WLAN aufs NAS synchronisieren","s_sync_all_content",c.sync_all_content==='true')}
+      ${chk("Music/LightShow/Boombox automatisch bei WLAN synchronisieren","s_sync_all_content",c.sync_all_content==='true')}
+      ${fld("Sync-Pfad auf dem NAS (Share + Unterpfad)","s_sync_media_path","text",c.sync_media_path,"Tesla_Video/Sonstiges")}
+      <div class="note">Legt darin automatisch die Ordner <code>Music/</code>, <code>LightShow/</code>, <code>Boombox/</code> an (gleicher NAS-Server/Zugang wie oben bei „Verbindung / NAS"). Ohne Pfad passiert nichts.</div>
+      <div class="saverow"><button class="btn sm ghost" id="mediasync">Jetzt synchronisieren</button><span class="note" id="mediasyncmsg"></span></div>
       <div class="field"><label>Aufnahmen auf dem Stick löschen</label>
         <select id="s_retention_mode">
           <option value="off"${c.retention_mode==='off'||!c.retention_mode?' selected':''}>Aus</option>
@@ -308,9 +505,20 @@ async function viewSettings(m){
   $("#nastest").onclick=async()=>{$("#nasmsg").textContent="Teste…";
     const r=await jget("api/nas/test");$("#nasmsg").textContent=r.ok?("✓ OK"+(r.writable?" (schreibbar)":" (nur lesbar)")):("✗ "+(r.error||"Fehler"));};
   $("#blepair").onclick=async()=>{$("#blemsg").textContent="Koppeln…";const r=await jpost("api/ble/pair",{});$("#blemsg").textContent=r.ok?"✓ ok":"✗ Fehler";};
+  $("#mediasync").onclick=async()=>{
+    $("#mediasyncmsg").textContent="synchronisiere…";
+    let before=0;try{before=(await jget("api/nas/media_status")).t||0;}catch(e){}
+    await jpost("api/nas/sync_media",{});
+    const poll=async()=>{
+      let st;try{st=await jget("api/nas/media_status");}catch(e){return;}
+      if(!st.t||st.t<=before){setTimeout(poll,1500);return;}
+      $("#mediasyncmsg").textContent=st.ok?`✓ fertig (${st.copied}/3 Ordner)`:"✗ "+(st.error||"Fehler");
+    };
+    setTimeout(poll,2000);
+  };
   $("#savebtn").onclick=async()=>{
     const fields=["archive_server","share_name","share_user","ssid","ap_ssid","tesla_ble_vin",
-      "telegram_chat_id","retention_days","retention_free_gb","vault_autolock_min","time_zone","teslausb_hostname"];
+      "telegram_chat_id","retention_days","retention_free_gb","vault_autolock_min","time_zone","teslausb_hostname","sync_media_path"];
     const secrets=["share_password","wifipass","ap_pass","teslafi_api_token","tessie_api_token",
       "pushover_user_key","pushover_app_key","telegram_bot_token"];
     const bools=["archive_recentclips","archive_savedclips","archive_sentryclips","sync_all_content",

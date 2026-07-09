@@ -147,6 +147,8 @@ def nas_sync_loop():
             nassync.refresh_status(CFG["scan"])
             if VAULT.is_unlocked():
                 nassync.push_key_sidecars(CFG["scan"], VAULT)
+            if hubconf.getval("SYNC_ALL_CONTENT") == "true":
+                nassync.sync_media()
         except Exception as e:
             print("[hub] nas sync:", e, flush=True)
         time.sleep(600)
@@ -286,6 +288,11 @@ class H(BaseHTTPRequestHandler):
             return self._json(200, {"points": VIEWER.all_gps()})
         if path == "/api/trips":
             return self._json(200, VIEWER.trips())
+        if path == "/api/event":
+            ev = VIEWER.event_data(self._qs("id"))
+            if ev is None:
+                return self._json(404, {"error": "no event"})
+            return self._json(200, ev)
         if path == "/api/thumb":
             t = VIEWER.make_thumb(self._qs("id"))
             if not t:
@@ -328,6 +335,8 @@ class H(BaseHTTPRequestHandler):
                 return self._json(200, dict(_bulk_job))
         if path == "/api/nas/sync_status":
             return self._json(200, nassync.status())
+        if path == "/api/nas/media_status":
+            return self._json(200, nassync.media_status())
         return self._json(404, {"error": "not found"})
 
     def do_POST(self):
@@ -396,6 +405,9 @@ class H(BaseHTTPRequestHandler):
             return self._json(200, diag.ble_pair())
         if path == "/api/nas/sync_status/refresh":
             threading.Thread(target=lambda: nassync.refresh_status(CFG["scan"]), daemon=True).start()
+            return self._json(200, {"ok": True})
+        if path == "/api/nas/sync_media":
+            threading.Thread(target=nassync.sync_media, daemon=True).start()
             return self._json(200, {"ok": True})
         if path == "/api/tesla/exchange":
             try:
