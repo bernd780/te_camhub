@@ -71,6 +71,8 @@ async function viewClips(m){
   m.innerHTML="";
   m.append(el("h2","title","Aufnahmen"));
   const info=el("div","sub","lädt…");m.append(info);
+  const nasrow=el("div","sub nasrow","NAS-Archiv: lädt…");m.append(nasrow);
+  refreshNasStatus(nasrow);
   const bar=el("div","saverow");
   const bulkbtn=el("button","btn sm","🔓 Alle entschlüsseln + Metadaten erzeugen");
   const bulkmsg=el("span","note","");
@@ -111,6 +113,16 @@ async function viewClips(m){
     card.onclick=()=>openClip(c);
     grid.append(card);
   });
+}
+async function refreshNasStatus(nasrow){
+  let s;try{s=await jget("api/nas/sync_status");}catch(e){return;}
+  nasrow.innerHTML="";
+  if(s.ok===null){nasrow.append(el("span",null,"NAS-Archiv: noch nicht geprüft "));}
+  else if(!s.ok){nasrow.append(el("span",null,"NAS-Archiv: nicht erreichbar ("+(s.error||"Fehler")+") "));}
+  else{nasrow.append(el("span",null,`NAS-Archiv: ${s.percent}% archiviert (${s.on_nas}/${s.total} Clips) `));}
+  const rl=el("a",null,"jetzt prüfen");
+  rl.onclick=async()=>{nasrow.querySelector("span").textContent="NAS-Archiv: prüfe…";await jpost("api/nas/sync_status/refresh",{});setTimeout(()=>refreshNasStatus(nasrow),20000);};
+  nasrow.append(rl);
 }
 async function openClip(c){
   toast("Bereite Clip vor…");

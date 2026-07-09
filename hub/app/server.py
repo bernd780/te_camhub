@@ -18,7 +18,7 @@ from urllib.parse import urlparse, parse_qs
 from vault import Vault, VaultError
 from viewer import Viewer
 from tesla_auth import TeslaAuth
-import tesla_api, keybridge, hubconf, files as filemod, diag
+import tesla_api, keybridge, hubconf, files as filemod, diag, nassync
 
 WWW = os.path.join(os.path.dirname(os.path.abspath(__file__)), "www")
 
@@ -97,6 +97,19 @@ def key_fetch_loop():
                         print(f"[hub] fetched {got} new keys", flush=True)
         except Exception as e:
             print("[hub] key fetch:", e, flush=True)
+
+
+def nas_sync_loop():
+    """Periodically refresh the local-vs-NAS archive coverage percentage and
+    push any newly-known per-video key sidecars to the NAS."""
+    while True:
+        try:
+            nassync.refresh_status(CFG["scan"])
+            if VAULT.is_unlocked():
+                nassync.push_key_sidecars(CFG["scan"], VAULT)
+        except Exception as e:
+            print("[hub] nas sync:", e, flush=True)
+        time.sleep(600)
 
 
 def _bulk_worker():
@@ -273,6 +286,8 @@ class H(BaseHTTPRequestHandler):
         if path == "/api/bulk_prepare":
             with _bulk_guard:
                 return self._json(200, dict(_bulk_job))
+        if path == "/api/nas/sync_status":
+            return self._json(200, nassync.status())
         return self._json(404, {"error": "not found"})
 
     def do_POST(self):
@@ -337,6 +352,9 @@ class H(BaseHTTPRequestHandler):
             return self._json(200, diag.trigger_sync())
         if path == "/api/ble/pair":
             return self._json(200, diag.ble_pair())
+        if path == "/api/nas/sync_status/refresh":
+            threading.Thread(target=lambda: nassync.refresh_status(CFG["scan"]), daemon=True).start()
+            return self._json(200, {"ok": True})
         if path == "/api/tesla/exchange":
             try:
                 tok = AUTH.exchange_code(body.get("callback", ""))
@@ -430,6 +448,7 @@ def main():
     VIEWER = Viewer(a.scan, a.out, VAULT)
     threading.Thread(target=autolock_loop, daemon=True).start()
     threading.Thread(target=key_fetch_loop, daemon=True).start()
+    threading.Thread(target=nas_sync_loop, daemon=True).start()
     if a.redirect80:
         threading.Thread(target=_redirect80, daemon=True).start()
     httpd = ThreadingHTTPServer(("0.0.0.0", a.port), H)

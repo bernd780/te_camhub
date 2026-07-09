@@ -51,6 +51,8 @@ main{overflow:auto;padding:22px 26px}
 .topbar{display:none}
 h2.title{margin:2px 0 18px;font-size:22px;font-weight:700}
 .sub{color:var(--muted);font-size:13px;margin:-12px 0 18px}
+.nasrow{margin-top:-14px}
+.nasrow a{font-size:12.5px;margin-left:4px}
 
 /* ---------- cards / grids ---------- */
 .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:16px 18px;margin-bottom:16px}
