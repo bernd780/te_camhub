@@ -372,6 +372,8 @@ class H(BaseHTTPRequestHandler):
             return self._json(200, nassync.status())
         if path == "/api/nas/media_status":
             return self._json(200, nassync.media_status())
+        if path == "/api/ble/status":
+            return self._json(200, diag.ble_status_role(self._qs("name")))
         return self._json(404, {"error": "not found"})
 
     def do_POST(self):
@@ -460,8 +462,10 @@ class H(BaseHTTPRequestHandler):
             return self._json(200, diag.toggle_drives())
         if path == "/api/sync":
             return self._json(200, diag.trigger_sync())
+        if path == "/api/ble/install":
+            return self._json(200, diag.install_ble_binaries())
         if path == "/api/ble/pair":
-            return self._json(200, diag.ble_pair())
+            return self._json(200, diag.ble_pair_role(body.get("name", ""), body.get("role", "")))
         if path == "/api/nas/sync_status/refresh":
             threading.Thread(target=lambda: nassync.refresh_status(CFG["scan"]), daemon=True).start()
             return self._json(200, {"ok": True})

@@ -163,6 +163,8 @@ h2.title{margin:2px 0 18px;font-size:22px;font-weight:700}
 .saverow{display:flex;align-items:center;gap:12px;margin-top:8px}
 .note{color:var(--muted);font-size:12px;margin:6px 0}
 .note.warn{color:var(--warn)}
+.ble-row{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;
+  padding:9px 0;border-top:1px solid var(--line)}
 .logbox{background:#0a0d12;border:1px solid var(--line);border-radius:10px;padding:12px;
   font:12.5px/1.5 ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap;max-height:60vh;overflow:auto;color:#c9d4df}
 

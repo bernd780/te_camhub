@@ -479,8 +479,20 @@ async function viewSettings(m){
       ${fld("TeslaFi API-Token","s_teslafi_api_token","password","",c.teslafi_api_token_set?"•••• gesetzt":"")}
       ${fld("Tessie API-Token","s_tessie_api_token","password","",c.tessie_api_token_set?"•••• gesetzt":"")}
       ${fld("BLE Fahrzeug-VIN","s_tesla_ble_vin","text",c.tesla_ble_vin)}
-      <div class="saverow"><button class="btn sm ghost" id="blepair">BLE koppeln</button><span class="note" id="blemsg"></span></div>
-      <div class="note warn">⚠ Sicherheitshinweis: Der beim Koppeln erzeugte Schlüssel bekommt vom Auto vollen "Owner"-Zugriff (entriegeln, Kofferraum, Fahrfreigabe usw.) — auch wenn dieser Hub ihn selbst nur zum Sentry-Modus umschalten und Ladeport schließen benutzt. Der private Schlüssel liegt unverschlüsselt als Datei auf dem Stick (<code>/root/.ble/key_private.pem</code>); wer physischen Zugriff auf den Stick bekommt, könnte ihn kopieren und (nur in Bluetooth-Reichweite des Autos) für echte Auto-Befehle missbrauchen. Empfehlung: <b>PIN-to-Drive</b> im Auto aktivieren (verhindert Wegfahren trotz gestohlenem Schlüssel) und bei Verlust/Diebstahl des Sticks den BLE-Schlüssel sofort in der Tesla-App entfernen.</div>
+      <div class="note">BLE-Schlüssel werden mit einer <b>Rolle</b> gekoppelt, die festlegt, was der Schlüssel darf. Statt wie früher immer mit vollem "Owner"-Zugriff zu koppeln, lassen sich hier gezielt eingeschränkte Rollen für getrennte Zwecke koppeln (jede Rolle = ein eigener, unabhängiger Schlüssel):</div>
+      <div class="saverow" style="flex-wrap:wrap">
+        <button class="btn sm ghost" id="bleinstall">BLE-Programme installieren</button>
+        <span class="note" id="bleinstallmsg"></span>
+      </div>
+      <div class="ble-row">
+        <div><b>Wachhalten</b> <span class="note">(Rolle: charging_manager — Laden/Ladeport, evtl. für Wach-Anstupser nutzbar)</span></div>
+        <div class="saverow"><button class="btn sm ghost" id="blepair_awake">Koppeln</button><span class="note" id="blemsg_awake">–</span></div>
+      </div>
+      <div class="ble-row">
+        <div><b>Telemetrie lesen</b> <span class="note">(Rolle: vehicle_monitor — nur Lesen, keine Befehle)</span></div>
+        <div class="saverow"><button class="btn sm ghost" id="blepair_monitor">Koppeln</button><span class="note" id="blemsg_monitor">–</span></div>
+      </div>
+      <div class="note warn">⚠ Sicherheitshinweis: Unklar/unbestätigt ist, ob die Rolle <code>charging_manager</code> ein bereits schlafendes Auto überhaupt aufwecken kann (Community-Berichte zu einem verwandten Projekt deuten daraufhin, dass dafür bislang nur <code>driver</code>/<code>owner</code> zuverlässig funktionierten) — das muss am eigenen Auto getestet werden. Jeder gekoppelte private Schlüssel liegt unverschlüsselt als Datei auf dem Stick (<code>/root/.ble/&lt;name&gt;/key_private.pem</code>); wer physischen Zugriff auf den Stick bekommt, könnte ihn kopieren und (nur in Bluetooth-Reichweite des Autos) im Rahmen seiner Rolle missbrauchen. Empfehlung: <b>PIN-to-Drive</b> im Auto aktivieren und bei Verlust/Diebstahl des Sticks alle BLE-Schlüssel sofort in der Tesla-App entfernen.</div>
     </div>
     <div class="card"><h3>Benachrichtigungen</h3>
       ${chk("Pushover aktiv","s_pushover_enabled",c.pushover_enabled==='true')}
@@ -549,7 +561,24 @@ async function viewSettings(m){
   };
   $("#nastest").onclick=async()=>{$("#nasmsg").textContent="Teste…";
     const r=await jget("api/nas/test");$("#nasmsg").textContent=r.ok?("✓ OK"+(r.writable?" (schreibbar)":" (nur lesbar)")):("✗ "+(r.error||"Fehler"));};
-  $("#blepair").onclick=async()=>{$("#blemsg").textContent="Koppeln…";const r=await jpost("api/ble/pair",{});$("#blemsg").textContent=r.ok?"✓ ok":"✗ Fehler";};
+  $("#bleinstall").onclick=async()=>{
+    $("#bleinstallmsg").textContent="installiere… (kann eine Weile dauern)";
+    const r=await jpost("api/ble/install",{});
+    $("#bleinstallmsg").textContent=r.ok?(r.already?"✓ bereits installiert":"✓ installiert"):"✗ "+(r.error||"Fehler");
+  };
+  function wireBlePair(id,name,role){
+    $("#blepair_"+id).onclick=async()=>{
+      $("#blemsg_"+id).textContent="koppele…";
+      const r=await jpost("api/ble/pair",{name,role});
+      $("#blemsg_"+id).textContent=r.ok?"Anfrage gesendet – jetzt am Auto Schlüsselkarte an die Konsole halten und am Bildschirm bestätigen":"✗ "+(r.error||"Fehler");
+    };
+  }
+  wireBlePair("awake","awake","charging_manager");
+  wireBlePair("monitor","monitor","vehicle_monitor");
+  async function refreshBleStatus(id,name){
+    try{const r=await jget("api/ble/status?name="+name);$("#blemsg_"+id).textContent=r.paired?"✓ gekoppelt":"noch nicht gekoppelt";}catch(e){}
+  }
+  refreshBleStatus("awake","awake");refreshBleStatus("monitor","monitor");
   $("#pwchange").onclick=async()=>{
     const oldp=$("#s_pw_old").value,newp=$("#s_pw_new").value;
     if(!oldp||!newp){$("#pwmsg").textContent="✗ bitte beide Felder ausfüllen";return;}
