@@ -149,36 +149,43 @@ def media_status():
 
 
 def _media_mount(mnt, rw):
+    """Mount only the CIFS *share* itself (the first path segment of
+    SYNC_MEDIA_PATH) -- that's the one thing that must already exist on the
+    NAS. Any subpath after it (and the Music/LightShow/Boombox folders) are
+    created automatically once mounted, so a typo'd or not-yet-existing
+    subfolder never breaks the mount itself."""
     server = hubconf.getval("ARCHIVE_SERVER")
-    path = hubconf.getval("SYNC_MEDIA_PATH")
+    raw = (hubconf.getval("SYNC_MEDIA_PATH") or "").strip().strip("/")
     user = hubconf.getval("SHARE_USER")
     password = hubconf.getval("SHARE_PASSWORD")
     vers = hubconf.getval("CIFS_VERSION") or "3.0"
-    if not server or not path:
-        raise RuntimeError("Sync-Pfad nicht konfiguriert")
+    if not server or not raw:
+        raise RuntimeError("Sync-Pfad nicht konfiguriert (unter Einstellungen eintragen und speichern)")
+    share, _, subpath = raw.partition("/")
     os.makedirs(mnt, exist_ok=True)
     creds = tempfile.NamedTemporaryFile("w", delete=False)
     creds.write("username=%s\npassword=%s\n" % (user, password)); creds.close()
     os.chmod(creds.name, 0o600)
     opts = "credentials=%s,vers=%s,iocharset=utf8,%s" % (creds.name, vers, "rw" if rw else "ro")
     try:
-        r = subprocess.run(["mount", "-t", "cifs", "//%s/%s" % (server, path), mnt,
+        r = subprocess.run(["mount", "-t", "cifs", "//%s/%s" % (server, share), mnt,
                             "-o", opts], capture_output=True, text=True, timeout=25)
     finally:
         try: os.remove(creds.name)
         except OSError: pass
     if r.returncode != 0:
         raise RuntimeError((r.stderr or "Mount fehlgeschlagen").splitlines()[-1][:200])
+    return subpath
 
 
 def sync_media():
     """rsync Music/LightShow/Boombox (already locally mounted rw by teslausb's
-    own autofs under FS_BASE) to a configurable NAS path, auto-creating one
-    subfolder per partition there."""
+    own autofs under FS_BASE) to a configurable NAS path, auto-creating the
+    subpath and one subfolder per partition there."""
     mnt = "/tmp/hub_nas_media"
     _op_lock.acquire()
     try:
-        _media_mount(mnt, rw=True)
+        subpath = _media_mount(mnt, rw=True)
     except Exception as e:
         with _guard:
             _media_cache.update(t=time.time(), ok=False, error=str(e))
@@ -186,11 +193,13 @@ def sync_media():
         return {"ok": False, "error": str(e)}
     copied, errors = 0, []
     try:
+        base = os.path.join(mnt, subpath) if subpath else mnt
+        os.makedirs(base, exist_ok=True)
         for root_name in MEDIA_ROOTS:
             local_dir = os.path.join(FS_BASE, root_name)
             if not os.path.isdir(local_dir):   # accessing triggers autofs
                 continue
-            dest_dir = os.path.join(mnt, root_name)
+            dest_dir = os.path.join(base, root_name)
             os.makedirs(dest_dir, exist_ok=True)
             r = subprocess.run(
                 ["rsync", "-rt", "--no-perms", "--no-owner", "--no-group", local_dir + "/", dest_dir + "/"],

@@ -485,8 +485,8 @@ async function viewSettings(m){
     </div>
     <div class="card"><h3>Aufbewahrung & Sync</h3>
       ${chk("Music/LightShow/Boombox automatisch bei WLAN synchronisieren","s_sync_all_content",c.sync_all_content==='true')}
-      ${fld("Sync-Pfad auf dem NAS (Share + Unterpfad)","s_sync_media_path","text",c.sync_media_path,"Tesla_Video/Sonstiges")}
-      <div class="note">Legt darin automatisch die Ordner <code>Music/</code>, <code>LightShow/</code>, <code>Boombox/</code> an (gleicher NAS-Server/Zugang wie oben bei „Verbindung / NAS"). Ohne Pfad passiert nichts.</div>
+      ${fld("Sync-Pfad auf dem NAS","s_sync_media_path","text",c.sync_media_path,"Tesla_Video/Sonstiges")}
+      <div class="note">Erster Teil (vor dem ersten <code>/</code>) muss ein bereits vorhandener Freigabename auf dem NAS sein (z. B. <code>Tesla_Video</code>, gleicher Server/Zugang wie oben bei „Verbindung / NAS"). Alles danach (z. B. <code>Sonstiges</code>) sowie die Ordner <code>Music/</code>, <code>LightShow/</code>, <code>Boombox/</code> werden automatisch angelegt, falls sie noch nicht existieren. „Jetzt synchronisieren" speichert den Pfad automatisch mit.</div>
       <div class="saverow"><button class="btn sm ghost" id="mediasync">Jetzt synchronisieren</button><span class="note" id="mediasyncmsg"></span></div>
       <div class="field"><label>Aufnahmen auf dem Stick löschen</label>
         <select id="s_retention_mode">
@@ -525,6 +525,11 @@ async function viewSettings(m){
     const r=await jget("api/nas/test");$("#nasmsg").textContent=r.ok?("✓ OK"+(r.writable?" (schreibbar)":" (nur lesbar)")):("✗ "+(r.error||"Fehler"));};
   $("#blepair").onclick=async()=>{$("#blemsg").textContent="Koppeln…";const r=await jpost("api/ble/pair",{});$("#blemsg").textContent=r.ok?"✓ ok":"✗ Fehler";};
   $("#mediasync").onclick=async()=>{
+    const p=$("#s_sync_media_path").value.trim();
+    if(!p){$("#mediasyncmsg").textContent="✗ bitte zuerst Sync-Pfad eintragen";return;}
+    $("#mediasyncmsg").textContent="speichere Pfad…";
+    const sr=await jpost("api/settings",{sync_media_path:p});
+    if(!sr.ok){$("#mediasyncmsg").textContent="✗ "+(sr.error||"Pfad konnte nicht gespeichert werden");return;}
     $("#mediasyncmsg").textContent="synchronisiere…";
     let before=0;try{before=(await jget("api/nas/media_status")).t||0;}catch(e){}
     await jpost("api/nas/sync_media",{});
