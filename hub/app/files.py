@@ -90,15 +90,24 @@ def move(rel, destdir):
     shutil.move(full, os.path.join(dest, os.path.basename(full)))
 
 
+LOCKCHIME_MAX_BYTES = 1024 * 1024  # Tesla requires LockChime.wav <= 1 MB
+
+
 def set_lockchime(rel):
     """Copy a chime file onto Boombox/LockChime.wav -- the exact file the car
-    plays on lock/unlock -- overwriting it. Source must live under Boombox/."""
+    plays on lock/unlock -- overwriting it. Source must live under Boombox/
+    and already meet Tesla's own requirements for that file (.wav, <=1MB),
+    since the copy just becomes the new LockChime.wav verbatim."""
     rel_norm = (rel or "").replace("\\", "/").lstrip("/")
     if not rel_norm.startswith("Boombox/"):
         raise ValueError("Quelle muss im Boombox-Ordner liegen")
+    if not rel_norm.lower().endswith(".wav"):
+        raise ValueError("nur .wav-Dateien sind als LockChime zulässig")
     full = _safe(rel)
     if not os.path.isfile(full):
         raise ValueError("Datei nicht gefunden")
+    if os.path.getsize(full) > LOCKCHIME_MAX_BYTES:
+        raise ValueError("Datei zu groß (max. 1 MB für LockChime.wav)")
     dest = _safe("Boombox/LockChime.wav")
     tmp = dest + ".tmp"
     shutil.copyfile(full, tmp)
