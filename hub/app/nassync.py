@@ -81,6 +81,22 @@ def _clip_groups(files):
     return groups
 
 
+def _on_nas(rel, ts, remote):
+    """True if rel (or teslausb's alternate RecentClips/<date>/ layout for
+    the same file) is present in the remote set. teslausb's own archiver
+    nests RecentClips under a per-day subfolder on the NAS
+    (RecentClips/2026-07-08/2026-07-08_17-35-19-front.mp4) while the local
+    snapshot tree keeps them flat (RecentClips/2026-07-08_17-35-19-front.mp4)
+    -- without this, every RecentClips entry looks permanently un-synced
+    even though it's actually already archived."""
+    if rel in remote:
+        return True
+    if rel.startswith("RecentClips/") and "/" not in rel[len("RecentClips/"):]:
+        alt = f"RecentClips/{ts[:10]}/{rel[len('RecentClips/'):]}"
+        return alt in remote
+    return False
+
+
 def refresh_status(scan_dir):
     """Recompute local-vs-NAS clip coverage, per clip. scan_dir = .../TeslaCam"""
     src = os.path.join(scan_dir, "EncryptedClips")
@@ -106,7 +122,8 @@ def refresh_status(scan_dir):
                             if nm.endswith(".mp4"):
                                 remote.add(os.path.relpath(os.path.join(root, nm), mnt).replace("\\", "/"))
                     for ck, cams in local_groups.items():
-                        synced = all(rel in remote for rel in cams.values())
+                        ts = ck.rsplit("|", 1)[-1]
+                        synced = all(_on_nas(rel, ts, remote) for rel in cams.values())
                         clip_status[ck] = synced
                         if synced:
                             on_nas += 1
