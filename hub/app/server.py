@@ -147,6 +147,8 @@ def nas_sync_loop():
             nassync.refresh_status(CFG["scan"])
             if VAULT.is_unlocked():
                 nassync.push_key_sidecars(CFG["scan"], VAULT)
+                if hubconf.getval("NAS_RAW_KEYS") == "true":
+                    nassync.push_raw_keys(CFG["scan"], VAULT, CFG["state"])
             if hubconf.getval("SYNC_ALL_CONTENT") == "true":
                 nassync.sync_media()
         except Exception as e:
@@ -374,6 +376,8 @@ class H(BaseHTTPRequestHandler):
             return self._json(200, nassync.media_status())
         if path == "/api/ble/status":
             return self._json(200, diag.ble_status_role(self._qs("name")))
+        if path == "/api/nas/raw_keys/pairing":
+            return self._json(200, nassync.pairing_status(CFG["state"]))
         return self._json(404, {"error": "not found"})
 
     def do_POST(self):
@@ -469,6 +473,10 @@ class H(BaseHTTPRequestHandler):
         if path == "/api/nas/sync_status/refresh":
             threading.Thread(target=lambda: nassync.refresh_status(CFG["scan"]), daemon=True).start()
             return self._json(200, {"ok": True})
+        if path == "/api/nas/raw_keys/push":
+            return self._json(200, nassync.push_raw_keys(CFG["scan"], VAULT, CFG["state"]))
+        if path == "/api/nas/raw_keys/reset_pairing":
+            return self._json(200, nassync.reset_pairing(CFG["state"]))
         if path == "/api/nas/sync_media":
             threading.Thread(target=nassync.sync_media, daemon=True).start()
             return self._json(200, {"ok": True})

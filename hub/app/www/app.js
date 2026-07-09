@@ -527,6 +527,17 @@ async function viewSettings(m){
       ${fld("Mind. freien Speicher halten (GB)","s_retention_free_gb","number",c.retention_free_gb)}
       <div class="note">Gelöscht wird nur, was bereits auf dem NAS gesichert ist.</div>
     </div>
+    <div class="card"><h3>Rohschlüssel für externe Instanz</h3>
+      <div class="note warn">⚠ Sicherheits-Kompromiss: standardmäßig sind die Schlüssel-Sidecar-Dateien auf dem NAS (<code>*.key.json</code>) ohne Tresor-Passwort nutzlos. Diese Option schreibt zusätzlich <b>unverschlüsselte</b> Schlüssel (<code>*.rawkey.json</code>) neben die Videos, damit ein separates System die Clips direkt lesen kann, ohne das Tresor-Passwort zu kennen. Nur aktivieren, wenn das NAS selbst vertrauenswürdig/abgesichert ist.</div>
+      <div class="note">Schutz dagegen, dass Rohschlüssel versehentlich auf ein falsches/vertauschtes NAS geschrieben werden: beim ersten Mal wird ein zufälliges Kopplungs-Token sowohl hier als auch in einer Datei auf dem NAS (<code>HUB-NAS-KOPPLUNG.json</code>) hinterlegt. Stimmen die Tokens bei einem späteren Lauf nicht überein (z. B. weil ein anderes NAS unter demselben Namen erreichbar ist), werden <b>keine</b> Rohschlüssel geschrieben.</div>
+      ${chk("Unverschlüsselte Schlüssel für externe Instanz auf NAS ablegen","s_nas_raw_keys",c.nas_raw_keys==='true')}
+      <div class="saverow" style="flex-wrap:wrap">
+        <span class="note" id="pairingstatus">Kopplungsstatus: lädt…</span>
+        <button class="btn sm ghost" id="rawkeypush">Jetzt übertragen</button>
+        <button class="btn sm ghost" id="pairingreset">Kopplung zurücksetzen</button>
+      </div>
+      <div class="note" id="rawkeymsg"></div>
+    </div>
     <div class="card"><h3>Sicherheit & System</h3>
       <div class="note">Grundprinzip: der Stick soll bei Diebstahl wertlos sein. Entschlüsselungs-Schlüssel und Tesla-Token liegen nie unverschlüsselt auf dem Stick, sondern nur verschlüsselt im Tresor; das eigentliche Video wird beim Ansehen nur kurz im RAM entschlüsselt, nie dauerhaft gespeichert. Die beiden Einstellungen unten sichern die zwei verbleibenden Angriffsflächen ab: den Fernzugriff (SSH) und den Zustand "Tresor gerade entsperrt".</div>
       ${chk("SSH-Passwort-Login abschalten","s_ssh_disable_password",c.ssh_disable_password==='true')}
@@ -588,6 +599,26 @@ async function viewSettings(m){
     if(r.ok){$("#pwmsg").textContent="✓ Passwort geändert";$("#s_pw_old").value="";$("#s_pw_new").value="";toast("Tresor-Passwort geändert");}
     else{$("#pwmsg").textContent="✗ "+(r.error||"Fehler");}
   };
+  async function refreshPairingStatus(){
+    try{
+      const r=await jget("api/nas/raw_keys/pairing");
+      $("#pairingstatus").textContent=r.paired?("Kopplungsstatus: ✓ gekoppelt (Token "+r.token_prefix+"…)"):"Kopplungsstatus: noch nicht gekoppelt (wird beim ersten Übertragen angelegt)";
+    }catch(e){$("#pairingstatus").textContent="Kopplungsstatus: unbekannt";}
+  }
+  refreshPairingStatus();
+  $("#rawkeypush").onclick=async()=>{
+    $("#rawkeymsg").textContent="übertrage…";
+    const r=await jpost("api/nas/raw_keys/push",{});
+    $("#rawkeymsg").textContent=r.ok?`✓ ${r.written||0} Rohschlüssel geschrieben`:"✗ "+(r.error||(r.errors&&r.errors[0])||"Fehler");
+    refreshPairingStatus();
+  };
+  $("#pairingreset").onclick=async()=>{
+    if(!confirm("Kopplung wirklich zurücksetzen? Danach wird beim nächsten Übertragen eine neue Kopplung mit dem aktuell erreichbaren NAS angelegt."))return;
+    $("#rawkeymsg").textContent="setze zurück…";
+    const r=await jpost("api/nas/raw_keys/reset_pairing",{});
+    $("#rawkeymsg").textContent=r.ok?"✓ Kopplung zurückgesetzt":"✗ "+(r.error||"Fehler");
+    refreshPairingStatus();
+  };
   $("#mediasync").onclick=async()=>{
     const p=$("#s_sync_media_path").value.trim();
     if(!p){$("#mediasyncmsg").textContent="✗ bitte zuerst Sync-Pfad eintragen";return;}
@@ -611,7 +642,7 @@ async function viewSettings(m){
     const secrets=["share_password","wifipass","ap_pass","teslafi_api_token","tessie_api_token",
       "pushover_user_key","pushover_app_key","telegram_bot_token","mqtt_password"];
     const bools=["archive_recentclips","archive_savedclips","archive_sentryclips","sync_all_content",
-      "ssh_disable_password","pushover_enabled","telegram_enabled","ap_fallback_only","mqtt_enabled"];
+      "ssh_disable_password","pushover_enabled","telegram_enabled","ap_fallback_only","mqtt_enabled","nas_raw_keys"];
     const body={};
     fields.forEach(f=>body[f]=($("#s_"+f)||{}).value||"");
     secrets.forEach(f=>{const v=($("#s_"+f)||{}).value;if(v)body[f]=v;});

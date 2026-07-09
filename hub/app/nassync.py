@@ -26,9 +26,21 @@ Camera-clip-observing jobs, both driven by nas_sync_loop() in server.py:
     one-time README explaining what the files are for. The sidecar is
     self-describing (names the exact video it belongs to) and is useless
     without the vault passphrase (FEK is sealed with the vault's MK).
+  - push_raw_keys(): OPT-IN, off by default. Writes the *unsealed* FEK
+    (<video>.mp4.rawkey.json) so a separate, trusted system with NAS access
+    can decrypt clips without ever knowing the vault passphrase. Gated by
+    a NAS-pairing check (see _ensure_nas_pairing): a random token is minted
+    on first use, stored both locally and in a file on the NAS share root;
+    every subsequent run refuses to write raw keys unless the two match.
+    This stops raw keys from ever landing on a NAS that got swapped/
+    misconfigured/pointed elsewhere after the fact -- the whole point of
+    offering this weaker mode is that it should only ever talk to the one
+    NAS it was explicitly paired with.
 """
-import os, re, json, time, base64, datetime, subprocess, tempfile, threading
+import os, re, json, time, base64, secrets, datetime, subprocess, tempfile, threading
 import hubconf
+
+PAIRING_FILE = "HUB-NAS-KOPPLUNG.json"
 
 TS_RE = re.compile(r"(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})-(.+)\.mp4$", re.I)
 README_NAME = "SCHLUESSEL-INFO.txt"
@@ -282,6 +294,129 @@ def push_key_sidecars(scan_dir, vault):
                     "algo": "AES-256-GCM (TeslaCam Hub vault)",
                     "created": datetime.datetime.utcnow().isoformat() + "Z",
                     "key_sealed_b64": base64.b64encode(sealed).decode("ascii"),
+                }, indent=2)
+                tmp = sidecar + ".tmp"
+                with open(tmp, "w", encoding="utf-8") as f:
+                    f.write(payload)
+                os.replace(tmp, sidecar)
+                written += 1
+            except Exception as e:
+                errors.append(f"{rel}: {e}")
+    finally:
+        _umount(mnt)
+        _op_lock.release()
+    return {"ok": not errors, "written": written, "errors": errors}
+
+
+def _pairing_path(state_dir):
+    return os.path.join(state_dir, "nas_pairing_token.txt")
+
+
+def pairing_status(state_dir):
+    """Local view only (no NAS mount) -- whether this Hub has ever minted a
+    pairing token. Doesn't confirm the NAS side still matches; that's only
+    checked at the moment of an actual raw-key push."""
+    p = _pairing_path(state_dir)
+    if os.path.isfile(p):
+        return {"paired": True, "token_prefix": open(p).read().strip()[:8]}
+    return {"paired": False}
+
+
+def reset_pairing(state_dir):
+    """Forget the local pairing token. The next raw-key push will mint a
+    fresh one and (re-)write it to whatever NAS is mounted at that time --
+    use this deliberately when switching to a different/replacement NAS."""
+    try:
+        os.remove(_pairing_path(state_dir))
+    except FileNotFoundError:
+        pass
+    return {"ok": True}
+
+
+def _ensure_nas_pairing(mnt, state_dir):
+    """Verify (or establish, on first use) that the currently-mounted NAS is
+    the one this Hub instance is paired with, via a small token file at the
+    share root. Returns True only if the NAS is confirmed to be the paired
+    one (or is being paired for the first time); False means refuse to
+    write raw keys."""
+    local_path = _pairing_path(state_dir)
+    local_tok = open(local_path).read().strip() if os.path.isfile(local_path) else None
+    nas_file = os.path.join(mnt, PAIRING_FILE)
+
+    remote_tok = None
+    if os.path.isfile(nas_file):
+        try:
+            remote_tok = json.load(open(nas_file, encoding="utf-8")).get("hub_pairing_token")
+        except Exception:
+            remote_tok = None
+
+    if local_tok and remote_tok:
+        return local_tok == remote_tok
+    if local_tok and not remote_tok:
+        # We're paired locally but the NAS has no (or an unreadable) token
+        # file -- could be a different/reset NAS. Refuse rather than assume.
+        return False
+    if remote_tok and not local_tok:
+        # NAS already carries a token but this Hub's state dir has none
+        # (e.g. freshly restored state) -- adopt it rather than overwrite.
+        with open(local_path, "w", encoding="utf-8") as f:
+            f.write(remote_tok)
+        return True
+    # Neither side has a token yet: first-ever use, mint and write both.
+    new_tok = secrets.token_hex(32)
+    with open(local_path, "w", encoding="utf-8") as f:
+        f.write(new_tok)
+    with open(nas_file, "w", encoding="utf-8") as f:
+        json.dump({"hub_pairing_token": new_tok,
+                    "created": datetime.datetime.utcnow().isoformat() + "Z",
+                    "note": "Kopplungs-Nachweis zwischen diesem TeslaCam Hub und diesem NAS. "
+                            "Nicht löschen/verändern, sonst verweigert der Hub weitere "
+                            "Roh-Schlüssel-Übertragungen zu diesem Share."}, f, indent=2)
+    return True
+
+
+def push_raw_keys(scan_dir, vault, state_dir):
+    """OPT-IN: write the unsealed FEK next to each archived+keyed clip on
+    the NAS, as <video>.mp4.rawkey.json, so a separate trusted system can
+    decrypt clips using only NAS access -- no vault passphrase needed.
+    Refuses outright if the NAS-pairing check fails."""
+    if not vault.is_unlocked():
+        return {"ok": False, "error": "vault locked"}
+    keys = vault.keys()
+    if not keys:
+        return {"ok": True, "written": 0}
+    src = os.path.join(scan_dir, "EncryptedClips")
+    mnt = "/tmp/hub_nas_rawkeys"
+    _op_lock.acquire()
+    try:
+        _mount(mnt, rw=True)
+    except Exception as e:
+        _op_lock.release()
+        return {"ok": False, "error": str(e)}
+    written, errors = 0, []
+    try:
+        if not _ensure_nas_pairing(mnt, state_dir):
+            return {"ok": False, "written": 0,
+                    "error": "NAS-Kopplung ungültig -- Prüfdatei fehlt oder stimmt nicht überein. "
+                             "Keine Rohschlüssel übertragen (falsches/vertauschtes NAS?). "
+                             "Falls das NAS bewusst gewechselt wurde: Kopplung zurücksetzen und erneut versuchen."}
+        for cid, fek_b64 in keys.items():
+            rel = cid.lstrip("/")
+            if not os.path.isfile(os.path.join(src, rel)):
+                continue
+            remote_mp4 = os.path.join(mnt, rel)
+            if not os.path.isfile(remote_mp4):
+                continue
+            sidecar = remote_mp4 + ".rawkey.json"
+            if os.path.isfile(sidecar):
+                continue
+            try:
+                payload = json.dumps({
+                    "video": os.path.basename(rel),
+                    "for_file": rel,
+                    "algo": "AES-128-CBC (Tesla eCryptfs FEK, unsealed)",
+                    "fek_b64": fek_b64,
+                    "created": datetime.datetime.utcnow().isoformat() + "Z",
                 }, indent=2)
                 tmp = sidecar + ".tmp"
                 with open(tmp, "w", encoding="utf-8") as f:

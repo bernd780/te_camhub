@@ -6,7 +6,7 @@ scope incl. offline_access -> refresh token (live verified). Token cache in /dat
 First login requires a browser (fixed redirect URL); afterwards the add-on refreshes
 the token automatically.
 """
-import json, time, base64, hashlib, secrets, urllib.parse, os, urllib.request
+import json, time, base64, hashlib, secrets, urllib.parse, os, urllib.request, urllib.error
 
 AUTH = "https://auth.tesla.com/oauth2/v3"
 CLIENT_ID = "dashcam"
@@ -24,8 +24,12 @@ def _post_form(url: str, data: dict) -> dict:
         url, data=body,
         headers={"Content-Type": "application/x-www-form-urlencoded",
                  "User-Agent": "Mozilla/5.0"})
-    with urllib.request.urlopen(req, timeout=30) as r:
-        return json.loads(r.read().decode())
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return json.loads(r.read().decode())
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode("utf-8", "replace")[:300]
+        raise RuntimeError(f"Tesla token endpoint {e.code}: {detail}") from None
 
 
 class TeslaAuth:
