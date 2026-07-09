@@ -229,7 +229,17 @@ function chk(label,id,on){return `<label class="checkline"><input type="checkbox
 async function viewSettings(m){
   m.append(el("h2","title","Einstellungen"));
   let c;try{c=await jget("api/settings");}catch(e){return;}
+  let login={logged_in:false,has_refresh:false};
+  try{login=(await jget("api/status")).login||login;}catch(e){}
   const box=el("div");box.innerHTML=`
+    <div class="card"><h3>Tesla-Konto (für Schlüssel-Abruf)</h3>
+      <div class="note">Damit verschlüsselte Aufnahmen automatisch entschlüsselt werden können, muss der Hub sich einmalig bei Tesla anmelden und einen Schlüssel-Abruf-Token holen. Ohne diesen Login bleiben verschlüsselte Clips dauerhaft gesperrt.</div>
+      <div class="saverow"><span class="note" id="teslastatus">${login.logged_in?"✓ eingeloggt"+(login.has_refresh?" (bleibt automatisch gültig)":""):"✗ nicht eingeloggt"}</span></div>
+      <div class="saverow"><button class="btn sm" id="teslaloginbtn">Bei Tesla einloggen</button></div>
+      <div class="note">Öffnet die Tesla-Anmeldeseite in einem neuen Tab. Nach dem Login zeigt der Browser eine leere/Fehler-Seite unter <code>dashcam.tesla.com/callback?...</code> — die komplette Adresse aus der Adresszeile hier einfügen:</div>
+      ${fld("Callback-URL nach Login","s_tesla_callback","text","","https://dashcam.tesla.com/callback?code=...")}
+      <div class="saverow"><button class="btn sm ghost" id="teslaexchange">Bestätigen</button><span class="note" id="teslamsg"></span></div>
+    </div>
     <div class="card"><h3>Verbindung / NAS</h3>
       ${fld("Archiv-Server (NAS-IP)","s_archive_server","text",c.archive_server)}
       ${fld("Share + Pfad","s_share_name","text",c.share_name)}
@@ -280,6 +290,21 @@ async function viewSettings(m){
     </div>
     <div class="saverow"><button class="btn primary" style="width:auto" id="savebtn">Speichern</button><span class="note" id="savemsg"></span></div>`;
   m.append(box);
+  $("#teslaloginbtn").onclick=async()=>{
+    $("#teslamsg").textContent="hole Login-Link…";
+    try{const r=await jget("api/tesla/login_url");window.open(r.url,"_blank");$("#teslamsg").textContent="Tab geöffnet – nach Login die Adresse hier einfügen.";}
+    catch(e){$("#teslamsg").textContent="✗ Fehler beim Abrufen des Login-Links";}
+  };
+  $("#teslaexchange").onclick=async()=>{
+    const cb=$("#s_tesla_callback").value.trim();
+    if(!cb){$("#teslamsg").textContent="Bitte zuerst die Callback-URL einfügen";return;}
+    $("#teslamsg").textContent="prüfe…";
+    try{
+      const r=await jpost("api/tesla/exchange",{callback:cb});
+      if(r.ok){$("#teslamsg").textContent="✓ eingeloggt";$("#teslastatus").textContent="✓ eingeloggt"+(r.refresh?" (bleibt automatisch gültig)":"");toast("Tesla-Login erfolgreich");}
+      else{$("#teslamsg").textContent="✗ "+(r.error||"Fehler");}
+    }catch(e){$("#teslamsg").textContent="✗ Verbindungsfehler";}
+  };
   $("#nastest").onclick=async()=>{$("#nasmsg").textContent="Teste…";
     const r=await jget("api/nas/test");$("#nasmsg").textContent=r.ok?("✓ OK"+(r.writable?" (schreibbar)":" (nur lesbar)")):("✗ "+(r.error||"Fehler"));};
   $("#blepair").onclick=async()=>{$("#blemsg").textContent="Koppeln…";const r=await jpost("api/ble/pair",{});$("#blemsg").textContent=r.ok?"✓ ok":"✗ Fehler";};
