@@ -384,6 +384,11 @@ async function boot(){
     c.style.display=show?"flex":"none";
     if(show){ initMapFilter().then(()=>{ if(_gpsMap) setTimeout(()=>_gpsMap.invalidateSize(),50); }); }
   };
+  const lb=$("#lockbtn");
+  if(lb) lb.onclick=async()=>{
+    await fetch("api/vault/lock",{method:"POST"}).catch(()=>{});
+    location.reload();
+  };
   // Clips must always load even if the GPS map fails (e.g. leaflet-draw CDN blocked in ingress)
   try { await initMapFilter(); } catch(e){ console.error("GPS map init failed:", e); }
   try { await refreshStatus(); } catch(e){ console.error("status failed:", e); }

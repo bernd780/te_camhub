@@ -1061,6 +1061,10 @@ video {
           <input type="text" id="cfg_share_user" style="width:100%;padding:6px;box-sizing:border-box;"></label>
         <label style="display:block;margin:8px 0;">Passwort<br>
           <input type="password" id="cfg_share_password" autocomplete="new-password" style="width:100%;padding:6px;box-sizing:border-box;"></label>
+        <div style="margin:8px 0;">
+          <button type="button" id="cfg_testnas" style="padding:6px 14px;">Verbindung testen</button>
+          <span id="cfg_testnas_status" style="margin-left:10px;"></span>
+        </div>
         <div style="margin:10px 0;">
           <label style="display:block;"><input type="checkbox" id="cfg_archive_recentclips"> RecentClips archivieren</label>
           <label style="display:block;"><input type="checkbox" id="cfg_archive_savedclips"> SavedClips archivieren</label>
@@ -1081,6 +1085,23 @@ video {
           <input type="number" min="0" id="cfg_snapshot_interval" style="width:100%;padding:6px;box-sizing:border-box;"></label>
         <label style="display:block;margin:8px 0;">Archiv-Verz&ouml;gerung (Sekunden)<br>
           <input type="number" min="0" id="cfg_archive_delay" style="width:100%;padding:6px;box-sizing:border-box;"></label>
+
+        <h3 style="margin:18px 0 4px;">Synchronisation &amp; Aufbewahrung</h3>
+        <label style="display:block;margin:8px 0;">
+          <input type="checkbox" id="cfg_sync_all_content"> Alle Inhalte (LightShow/Wraps/Boombox/Musik + Schl&uuml;ssel-Backup) aufs NAS synchronisieren</label>
+        <label style="display:block;margin:8px 0;">
+          <input type="checkbox" id="cfg_vault_nas_autounlock"> Tresor bei erreichbarem NAS automatisch entsperren (kein Passwort n&ouml;tig)</label>
+
+        <div style="margin:10px 0;">Aufnahmen auf dem Stick l&ouml;schen:
+          <label style="display:block;margin-left:6px;"><input type="radio" name="cfg_ret" value="off" id="cfg_ret_off"> Aus</label>
+          <label style="display:block;margin-left:6px;"><input type="radio" name="cfg_ret" value="time" id="cfg_ret_time"> Nach Zeitraum</label>
+          <label style="display:block;margin-left:6px;"><input type="radio" name="cfg_ret" value="space" id="cfg_ret_space"> Rollierend nach freiem Speicher</label>
+        </div>
+        <label style="display:none;margin:8px 0;" id="cfg_ret_days_l">Aufbewahrung (Tage)<br>
+          <input type="number" min="1" id="cfg_retention_days" style="width:100%;padding:6px;box-sizing:border-box;"></label>
+        <label style="display:none;margin:8px 0;" id="cfg_ret_gb_l">Mindestens freien Speicher halten (GB)<br>
+          <input type="number" min="1" id="cfg_retention_free_gb" style="width:100%;padding:6px;box-sizing:border-box;"></label>
+        <p style="font-size:12px;opacity:.7;margin:6px 0;">Gel&ouml;scht wird nur, was bereits auf dem NAS gesichert ist.</p>
 
         <div style="margin-top:18px;">
           <button type="button" id="cfg_save" style="padding:8px 18px;">Speichern</button>
@@ -1116,9 +1137,27 @@ video {
           $("cfg_archive_trackmodeclips").checked = bool(c.archive_trackmodeclips);
           $("cfg_share_password").placeholder = c.share_password_set ? PW_PLACEHOLDER : "";
           $("cfg_wifipass").placeholder = c.wifipass_set ? PW_PLACEHOLDER : "";
+          $("cfg_sync_all_content").checked = bool(c.sync_all_content);
+          $("cfg_vault_nas_autounlock").checked = bool(c.vault_nas_autounlock);
+          $("cfg_retention_days").value = c.retention_days || "";
+          $("cfg_retention_free_gb").value = c.retention_free_gb || "";
+          var rm = c.retention_mode || "off";
+          var rb = document.getElementById("cfg_ret_" + rm) || $("cfg_ret_off");
+          rb.checked = true;
+          retToggle();
         };
         x.onerror = function () { $("cfg_status").textContent = "Verbindungsfehler"; };
         x.send();
+      }
+
+      function retMode() {
+        var r = document.querySelector('input[name="cfg_ret"]:checked');
+        return r ? r.value : "off";
+      }
+      function retToggle() {
+        var m = retMode();
+        $("cfg_ret_days_l").style.display = (m === "time") ? "block" : "none";
+        $("cfg_ret_gb_l").style.display = (m === "space") ? "block" : "none";
       }
 
       function save() {
@@ -1135,6 +1174,11 @@ video {
         add("archive_savedclips", $("cfg_archive_savedclips").checked);
         add("archive_sentryclips", $("cfg_archive_sentryclips").checked);
         add("archive_trackmodeclips", $("cfg_archive_trackmodeclips").checked);
+        add("sync_all_content", $("cfg_sync_all_content").checked);
+        add("vault_nas_autounlock", $("cfg_vault_nas_autounlock").checked);
+        add("retention_mode", retMode());
+        if ($("cfg_retention_days").value) add("retention_days", $("cfg_retention_days").value);
+        if ($("cfg_retention_free_gb").value) add("retention_free_gb", $("cfg_retention_free_gb").value);
         // passwords only when the user typed something
         if ($("cfg_share_password").value) add("share_password", $("cfg_share_password").value);
         if ($("cfg_wifipass").value) add("wifipass", $("cfg_wifipass").value);
@@ -1166,7 +1210,35 @@ video {
         x.send(p.join("&"));
       }
 
+      function testnas() {
+        var p = [];
+        function add(k, v) { p.push(encodeURIComponent(k) + "=" + encodeURIComponent(v)); }
+        add("archive_server", $("cfg_archive_server").value);
+        add("share_name", $("cfg_share_name").value);
+        add("share_user", $("cfg_share_user").value);
+        if ($("cfg_share_password").value) add("share_password", $("cfg_share_password").value);
+        $("cfg_testnas_status").textContent = "Teste…";
+        var x = new XMLHttpRequest();
+        x.open("POST", "cgi-bin/testnas.sh");
+        x.setRequestHeader("Content-Type", "application/x-www-form-urlencoded");
+        x.onload = function () {
+          var r = {};
+          try { r = JSON.parse(x.responseText); } catch (e) {}
+          if (x.status === 200 && r.ok) {
+            $("cfg_testnas_status").textContent = r.writable ? "✓ Verbindung OK (schreibbar)" : "✓ Verbindung OK (nur lesbar)";
+          } else {
+            $("cfg_testnas_status").textContent = "✗ " + (r.error || ("HTTP " + x.status));
+          }
+        };
+        x.onerror = function () { $("cfg_testnas_status").textContent = "✗ Verbindungsfehler"; };
+        x.send(p.join("&"));
+      }
+
       $("cfg_save").addEventListener("click", save);
+      $("cfg_testnas").addEventListener("click", testnas);
+      ["cfg_ret_off", "cfg_ret_time", "cfg_ret_space"].forEach(function (id) {
+        document.getElementById(id).addEventListener("change", retToggle);
+      });
       load();
     })();
     </script>

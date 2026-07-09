@@ -18,20 +18,28 @@ pip3 install --break-system-packages --quiet pycryptodome
 echo "Copying app files to /opt/teslacam-decryptor..."
 mkdir -p /opt/teslacam-decryptor
 cp -r "$here/app" /opt/teslacam-decryptor/
-cp "$here/update-latest-snapshot.sh" /opt/teslacam-decryptor/
-chmod +x /opt/teslacam-decryptor/update-latest-snapshot.sh
+cp "$here/update-latest-snapshot.sh" "$here/sync-to-nas.sh" "$here/retention.sh" /opt/teslacam-decryptor/
+chmod +x /opt/teslacam-decryptor/update-latest-snapshot.sh \
+         /opt/teslacam-decryptor/sync-to-nas.sh \
+         /opt/teslacam-decryptor/retention.sh
 
 echo "Installing systemd units..."
 cp "$here/teslacam-latest-snapshot.service" \
    "$here/teslacam-latest-snapshot.timer" \
    "$here/teslacam-decryptor.service" \
+   "$here/teslacam-sync.service" \
+   "$here/teslacam-sync.timer" \
+   "$here/teslacam-retention.service" \
+   "$here/teslacam-retention.timer" \
    /etc/systemd/system/
 
-mkdir -p /backingfiles/decrypt-viewer-state /backingfiles/decrypted
+mkdir -p /backingfiles/decrypt-viewer-state /dev/shm/teslacam
 
 systemctl daemon-reload
 systemctl enable --now teslacam-latest-snapshot.timer
 systemctl enable --now teslacam-decryptor.service
+systemctl enable --now teslacam-sync.timer
+systemctl enable --now teslacam-retention.timer
 
 echo "Remounting root read-only again..."
 mount / -o remount,ro

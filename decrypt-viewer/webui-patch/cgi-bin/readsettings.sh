@@ -51,6 +51,12 @@ ARCHIVE_SAVEDCLIPS=$(getval ARCHIVE_SAVEDCLIPS)
 ARCHIVE_SENTRYCLIPS=$(getval ARCHIVE_SENTRYCLIPS)
 ARCHIVE_TRACKMODECLIPS=$(getval ARCHIVE_TRACKMODECLIPS)
 
+SYNC_ALL_CONTENT=$(getval SYNC_ALL_CONTENT)
+RETENTION_MODE=$(getval RETENTION_MODE)
+RETENTION_DAYS=$(jsonesc "$(getval RETENTION_DAYS)")
+RETENTION_FREE_GB=$(jsonesc "$(getval RETENTION_FREE_GB)")
+VAULT_NAS_AUTOUNLOCK=$(getval VAULT_NAS_AUTOUNLOCK)
+
 SHARE_PASSWORD_SET=$(isset SHARE_PASSWORD)
 WIFIPASS_SET=$(isset WIFIPASS)
 
@@ -72,6 +78,11 @@ Content-type: application/json
   "wifipass_set": $WIFIPASS_SET,
   "time_zone": "$TIME_ZONE",
   "snapshot_interval": "$SNAPSHOT_INTERVAL",
-  "archive_delay": "$ARCHIVE_DELAY"
+  "archive_delay": "$ARCHIVE_DELAY",
+  "sync_all_content": "$SYNC_ALL_CONTENT",
+  "retention_mode": "$RETENTION_MODE",
+  "retention_days": "$RETENTION_DAYS",
+  "retention_free_gb": "$RETENTION_FREE_GB",
+  "vault_nas_autounlock": "$VAULT_NAS_AUTOUNLOCK"
 }
 EOF

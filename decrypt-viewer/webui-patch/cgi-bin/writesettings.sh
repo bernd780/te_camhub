@@ -50,10 +50,19 @@ declare -A MAP=(
   [time_zone]=TIME_ZONE
   [snapshot_interval]=SNAPSHOT_INTERVAL
   [archive_delay]=ARCHIVE_DELAY
+  [sync_all_content]=SYNC_ALL_CONTENT
+  [retention_mode]=RETENTION_MODE
+  [retention_days]=RETENTION_DAYS
+  [retention_free_gb]=RETENTION_FREE_GB
+  [vault_nas_autounlock]=VAULT_NAS_AUTOUNLOCK
 )
-BOOLS=" archive_recentclips archive_savedclips archive_sentryclips archive_trackmodeclips "
-INTS=" snapshot_interval archive_delay "
+BOOLS=" archive_recentclips archive_savedclips archive_sentryclips archive_trackmodeclips sync_all_content vault_nas_autounlock "
+INTS=" snapshot_interval archive_delay retention_days retention_free_gb "
 PASSWORDS=" share_password wifipass "
+# retention_mode is a constrained enum
+if [ -v "P[retention_mode]" ]; then
+  case "${P[retention_mode]}" in off|time|space) ;; *) fail "invalid retention_mode" ;; esac
+fi
 
 # Build the list of "VAR<TAB>escaped-value" updates to apply.
 declare -a UPDATES

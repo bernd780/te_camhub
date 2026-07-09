@@ -6,12 +6,13 @@ Requires=teslacam-latest-snapshot.service
 [Service]
 Type=simple
 Environment=DATA_DIR=/backingfiles/decrypt-viewer-state
-ExecStartPre=/bin/mkdir -p /backingfiles/decrypt-viewer-state /backingfiles/decrypted
+# OUT_DIR is on tmpfs (/dev/shm) so decrypted plaintext lives only in RAM and
+# never touches the stick; it is wiped on every reboot.
+ExecStartPre=/bin/mkdir -p /backingfiles/decrypt-viewer-state /dev/shm/teslacam
 ExecStart=/usr/bin/python3 /opt/teslacam-decryptor/app/server.py \
   --scan /run/teslacam-latest/mnt/TeslaCam \
   --src /run/teslacam-latest/mnt/TeslaCam/EncryptedClips \
-  --out /backingfiles/decrypted \
-  --keys /backingfiles/decrypt-viewer-state/teslacam_keys.json \
+  --out /dev/shm/teslacam \
   --port 8099 \
   --interval 60
 Restart=on-failure

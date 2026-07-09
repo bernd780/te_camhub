@@ -38,6 +38,16 @@ import keybridge, pipeline, keystore
 from keybridge import is_ecryptfs
 from tesla_auth import TeslaAuth
 import tesla_api
+from vault import Vault, VaultError
+
+VAULT = None   # set in __main__
+
+def vkeys():
+    """Current FEK map from the vault (empty when locked)."""
+    try:
+        return VAULT.keys() if (VAULT and VAULT.is_unlocked()) else {}
+    except Exception:
+        return {}
 
 WWW = os.path.join(os.path.dirname(os.path.abspath(__file__)), "www")
 DATA_DIR = os.environ.get("DATA_DIR", os.path.dirname(os.path.abspath(__file__)))
@@ -208,7 +218,7 @@ def _finalize(c):
 
 def _scan(keys=None):
     if keys is None:
-        keys = keystore.load(KEYS_FILE)
+        keys = vkeys()
     clips = {}
     for path in glob.glob(os.path.join(SCAN_DIR, "**", "*.mp4"), recursive=True):
         m = TS_RE.search(os.path.basename(path))
@@ -257,7 +267,7 @@ def _clip_cams(cid):
 
 def _scan_one(cid, keys=None):
     if keys is None:
-        keys = keystore.load(KEYS_FILE)
+        keys = vkeys()
     folder, ts, cams = _clip_cams(cid)
     if not cams:
         return None
@@ -445,7 +455,7 @@ def _decrypt_cam(sr, keys):
     pipeline.decrypt_and_cache(src_abspath(sr), cache_abspath(sr), fek, embed_key=EMBED_KEY)
 
 def prepare_clip(cid):
-    keys = keystore.load(KEYS_FILE)
+    keys = vkeys()
     folder, ts, cams = _clip_cams(cid)
     if not cams:
         return {"ok": False, "error": "clip not found"}
@@ -471,11 +481,44 @@ def prepare_clip(cid):
         if jobs:
             with ThreadPoolExecutor(max_workers=min(6, len(jobs))) as ex:
                 list(ex.map(do, jobs))
+    cap_tmpfs_cache()
     invalidate(cid)
     return {"ok": not errs, "errors": errs, "clip": _scan_one(cid, keys)}
 
+
+TMPFS_CACHE_CAP = 200 * 1024 * 1024   # keep decrypted-clip cache under ~200 MB in RAM
+
+def cap_tmpfs_cache():
+    """Evict oldest decrypted .mp4 files from the tmpfs OUT_DIR so it never
+    fills /dev/shm. Thumbnails/telemetry are tiny and left alone."""
+    try:
+        files = []
+        for root, _, names in os.walk(OUT_DIR):
+            for nm in names:
+                if nm.endswith(".mp4"):
+                    fp = os.path.join(root, nm)
+                    try:
+                        stt = os.stat(fp)
+                        files.append((stt.st_atime, stt.st_size, fp))
+                    except OSError:
+                        pass
+        total = sum(f[1] for f in files)
+        if total <= TMPFS_CACHE_CAP:
+            return
+        files.sort()   # oldest access first
+        for _at, sz, fp in files:
+            if total <= TMPFS_CACHE_CAP:
+                break
+            try:
+                os.remove(fp)
+                total -= sz
+            except OSError:
+                pass
+    except Exception:
+        pass
+
 def ensure_all():
-    keys = keystore.load(KEYS_FILE)
+    keys = vkeys()
     jobs = [_sr_of_cam(c["folder"], c["timestamp"], cam)
             for c in _scan(keys)
             for cam, info in c["cameras"].items() if info["state"] == "key"]
@@ -525,7 +568,7 @@ def make_thumb(cid):
     if not cams.get("front") and not os.path.isfile(src_abspath(front_sr)) \
             and not os.path.isfile(cache_abspath(front_sr)):
         return None
-    keys = keystore.load(KEYS_FILE)
+    keys = vkeys()
     with _clip_lock(cid):
         if os.path.isfile(cache):
             return cache
@@ -631,29 +674,33 @@ def api_fetch(items):
         except tesla_api.DecryptApiError as e:
             _last_api = {"ok": False, "msg": f"API: {e} (Bookmarklet nutzen)", "got": got}
             return _last_api
-        got += keystore.merge(KEYS_FILE, res)
+        got += (VAULT.merge_keys(res) if (VAULT and VAULT.is_unlocked()) else 0)
     _last_api = {"ok": True, "msg": "ok", "got": got}
     if got:
         invalidate()
     return _last_api
 
 def run_cycle(do_fetch=True, do_decrypt=None):
+    """Fetch missing FEKs from Tesla (once each) into the vault. Never mass-
+    decrypts to disk anymore — decryption is on demand only. do_decrypt is
+    accepted for call-site compatibility but ignored."""
     global _busy
-    if do_decrypt is None:
-        do_decrypt = AUTO_DECRYPT
+    if not (VAULT and VAULT.is_unlocked()):
+        return {"skipped": "locked"}
     if not _lock.acquire(blocking=False):
         return {"skipped": "busy"}
     _busy = True
     try:
         if do_fetch and DIRECT_API and auth.get_access_token():
-            items = keybridge.scan_items(SRC_DIR, keystore.load(KEYS_FILE))
+            items = keybridge.scan_items(SRC_DIR, vkeys())
             if items:
                 r = api_fetch(items)
                 print(f"[fetch] {len(items)} offen, +{r.get('got',0)} Keys ({r.get('msg')})", flush=True)
-        if do_decrypt:
-            r = ensure_all()
-            if r["decrypted"]:
-                print(f"[decrypt] {r}", flush=True)
+        # stage encrypted per-clip key sidecars for the NAS (sync copies them)
+        try:
+            stage_key_sidecars()
+        except Exception as e:
+            print("[sidecar]", e, flush=True)
     finally:
         _busy = False
         _lock.release()
@@ -661,9 +708,151 @@ def run_cycle(do_fetch=True, do_decrypt=None):
 def bg(fn, *a, **k):
     threading.Thread(target=fn, args=a, kwargs=k, daemon=True).start()
 
+SIDECAR_DIR = ""   # set in __main__ (staging dir for encrypted per-clip keys)
+CONF_PATH = "/root/teslausb_setup_variables.conf"
+_NAS_MK_MOUNT = "/mnt/nasmk"
+
+def getconf(name):
+    """Read a single `export NAME=...` value from the teslausb conf."""
+    try:
+        with open(CONF_PATH, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                if line.startswith("export " + name + "="):
+                    v = line[len("export " + name + "="):].strip()
+                    if len(v) >= 2 and v[0] in "'\"" and v[-1] == v[0]:
+                        v = v[1:-1]
+                    return v
+    except Exception:
+        pass
+    return ""
+
+def _nas_mk_path():
+    server = getconf("ARCHIVE_SERVER"); share = getconf("SHARE_NAME").split("/", 1)[0]
+    user = getconf("SHARE_USER"); pw = getconf("SHARE_PASSWORD")
+    vers = getconf("CIFS_VERSION") or "3.0"
+    if not server or not share:
+        return None, None
+    import subprocess, tempfile
+    os.makedirs(_NAS_MK_MOUNT, exist_ok=True)
+    creds = tempfile.NamedTemporaryFile("w", delete=False)
+    creds.write("username=%s\npassword=%s\n" % (user, pw)); creds.close()
+    os.chmod(creds.name, 0o600)
+    try:
+        subprocess.run(["mount", "-t", "cifs", "//%s/%s" % (server, share), _NAS_MK_MOUNT,
+                        "-o", "credentials=%s,vers=%s,iocharset=utf8,rw,file_mode=0600,dir_mode=0700" % (creds.name, vers)],
+                       check=True, capture_output=True, timeout=30)
+    except Exception:
+        os.unlink(creds.name); return None, None
+    os.unlink(creds.name)
+    return os.path.join(_NAS_MK_MOUNT, "teslausb-keys-backup", "vault.mk"), creds
+
+def _nas_umount():
+    import subprocess
+    subprocess.run(["umount", _NAS_MK_MOUNT], capture_output=True)
+
+def _read_nas_mk():
+    path, _ = _nas_mk_path()
+    if not path:
+        return None
+    try:
+        return open(path, "rb").read() if os.path.isfile(path) else None
+    finally:
+        _nas_umount()
+
+def _write_nas_mk(mk: bytes):
+    path, _ = _nas_mk_path()
+    if not path:
+        return False
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as f:
+            f.write(mk)
+        os.chmod(path, 0o600)
+        return True
+    except Exception:
+        return False
+    finally:
+        _nas_umount()
+
+def ensure_nas_mk():
+    """Push the MK to the NAS when auto-unlock is enabled (so future reboots
+    unlock without a passphrase). MK never lands on the stick."""
+    if VAULT and VAULT.is_unlocked() and getconf("VAULT_NAS_AUTOUNLOCK") == "true":
+        try:
+            if _write_nas_mk(VAULT.get_mk()):
+                print("[vault] master key stored on NAS for auto-unlock", flush=True)
+        except Exception as e:
+            print("[vault] NAS MK write failed:", e, flush=True)
+
+def _import_legacy():
+    """One-time migration: read the old plaintext keystore + token so they can
+    be imported into the new vault. Originals are left in place (wiped later)."""
+    keys, tok = {}, {}
+    for p in (os.path.join(DATA_DIR, "teslacam_keys.json"),
+              keystore.default_path(SRC_DIR)):
+        try:
+            if p and os.path.isfile(p):
+                d = json.load(open(p, encoding="utf-8"))
+                if isinstance(d, dict):
+                    keys.update(d)
+        except Exception:
+            pass
+    try:
+        tp = os.path.join(DATA_DIR, "token_store.json")
+        if os.path.isfile(tp):
+            tok = json.load(open(tp, encoding="utf-8")) or {}
+    except Exception:
+        tok = {}
+    return keys, tok
+
+
+def stage_key_sidecars():
+    """For each encrypted clip whose FEK is in the vault, write an encrypted
+    key sidecar '<clip>.key' into SIDECAR_DIR mirroring the clip's path under
+    the TeslaCam tree. sync-to-nas.sh copies these next to the clips on the NAS.
+    The sidecar is sealed with the vault MK — no clear-text key ever hits disk."""
+    if not (VAULT and VAULT.is_unlocked() and SIDECAR_DIR):
+        return
+    keys = VAULT.keys()
+    if not keys:
+        return
+    n = 0
+    for cid, fek_b64 in keys.items():
+        # cid is relative to SCAN_DIR, e.g. "EncryptedClips/RecentClips/x.mp4"
+        rel = cid.lstrip("/")
+        out = os.path.join(SIDECAR_DIR, rel + ".key")
+        if os.path.exists(out):
+            continue
+        try:
+            blob = VAULT.seal(base64.b64decode(fek_b64))
+            os.makedirs(os.path.dirname(out), exist_ok=True)
+            tmp = out + ".tmp"
+            with open(tmp, "wb") as f:
+                f.write(blob)
+            os.replace(tmp, out)
+            n += 1
+        except Exception:
+            pass
+    if n:
+        print(f"[sidecar] staged {n} encrypted key sidecars", flush=True)
+
+def try_nas_autounlock():
+    """If the vault is locked and NAS auto-unlock is enabled, fetch the MK from
+    the NAS (vault.mk) and unlock without a passphrase."""
+    if not VAULT or VAULT.is_unlocked() or not VAULT.has_vault():
+        return
+    if getconf("VAULT_NAS_AUTOUNLOCK") != "true":
+        return
+    mk = _read_nas_mk()
+    if mk and len(mk) == 32:
+        if VAULT.unlock_with_mk(mk):
+            print("[vault] auto-unlocked via NAS master key", flush=True)
+            bg(run_cycle, do_fetch=True)
+
 def scheduler():
     while True:
         try:
+            try_nas_autounlock()
             run_cycle()
         except Exception as e:
             print("[sched]", e, flush=True)
@@ -742,6 +931,13 @@ class H(BaseHTTPRequestHandler):
     def _qs(self, key):
         return parse_qs(urlparse(self.path).query).get(key, [""])[0]
 
+    def _locked(self):
+        """Send 423 and return True if the vault is not unlocked."""
+        if not (VAULT and VAULT.is_unlocked()):
+            self._send(423, {"error": "locked"})
+            return True
+        return False
+
     def do_GET(self):
         path = self.path.split("?")[0]
         if path in ("/", "/index.html"):
@@ -753,12 +949,19 @@ class H(BaseHTTPRequestHandler):
                 ct = "text/css" if fp.endswith(".css") else "application/javascript"
                 return self._file(fp, ct)
             return self._send(404, {"error": "not found"})
+        if path == "/api/vault/status":
+            return self._send(200, {
+                "has_vault": bool(VAULT and VAULT.has_vault()),
+                "unlocked": bool(VAULT and VAULT.is_unlocked()),
+            })
         if path == "/api/status":
-            st = counts(clips_cached())
+            unlocked = bool(VAULT and VAULT.is_unlocked())
+            st = counts(clips_cached()) if unlocked else {}
             st["busy"] = _busy
+            st["vault"] = {"has_vault": bool(VAULT and VAULT.has_vault()), "unlocked": unlocked}
             st["auto_decrypt"] = AUTO_DECRYPT
             st["direct_api"] = DIRECT_API
-            st["login"] = auth.status()
+            st["login"] = auth.status() if unlocked else {"logged_in": False, "has_refresh": False}
             st["last_api"] = _last_api
             st["thumb_job"] = _thumb_job
             st["tel_job"] = _tel_job
@@ -766,6 +969,8 @@ class H(BaseHTTPRequestHandler):
         if path == "/api/clips":
             return self._send(200, clips_cached())
         if path == "/api/thumb":
+            if self._locked():
+                return
             t = make_thumb(self._qs("id"))
             if not t:
                 return self._send(404, {"error": "no thumb"})
@@ -790,12 +995,18 @@ class H(BaseHTTPRequestHandler):
         if path == "/api/analytics":
             return self._send(200, analytics_cached())
         if path == "/api/pending.json":
-            items = keybridge.scan_items(SRC_DIR, keystore.load(KEYS_FILE))
+            if self._locked():
+                return
+            items = keybridge.scan_items(SRC_DIR, vkeys())
             return self._send(200, {"items": items}, "application/json",
                               {"Content-Disposition": 'attachment; filename="pending_items.json"'})
         if path == "/api/login/url":
+            if self._locked():
+                return
             return self._send(200, {"url": auth.make_login_url()})
         if path == "/api/zip":
+            if self._locked():
+                return
             cid = self._qs("id")
             clip = _scan_one(cid)
             if not clip:
@@ -827,6 +1038,8 @@ class H(BaseHTTPRequestHandler):
                     pass
             return
         if path.startswith("/media/"):
+            if self._locked():
+                return
             full = resolve_media(path[len("/media/"):])
             if not full:
                 return self._send(404, {"error": "not found"})
@@ -840,28 +1053,63 @@ class H(BaseHTTPRequestHandler):
         path = self.path.split("?")[0]
         n = int(self.headers.get("Content-Length", 0) or 0)
         raw = self.rfile.read(n) if n else b"{}"
-        if path == "/api/prepare":
+        try:
+            body = json.loads(raw or b"{}")
+        except Exception:
+            body = {}
+
+        # ----- vault management (allowed while locked) -----
+        if path == "/api/vault/setup":
+            if VAULT.has_vault():
+                return self._send(409, {"ok": False, "error": "vault exists"})
+            pw = body.get("pass", "")
+            if not pw:
+                return self._send(400, {"ok": False, "error": "empty passphrase"})
+            imp_keys, imp_tok = ({}, {})
+            if body.get("import"):
+                imp_keys, imp_tok = _import_legacy()
             try:
-                cid = json.loads(raw or b"{}").get("id", "")
-            except Exception:
-                return self._send(400, {"ok": False, "error": "bad json"})
-            return self._send(200, prepare_clip(cid))
+                VAULT.create(pw, import_keys=imp_keys, import_token=imp_tok)
+            except VaultError as e:
+                return self._send(400, {"ok": False, "error": str(e)})
+            ensure_nas_mk()
+            invalidate()
+            bg(run_cycle, do_fetch=True)
+            return self._send(200, {"ok": True, "imported_keys": len(imp_keys)})
+        if path == "/api/vault/unlock":
+            if VAULT.unlock_with_pass(body.get("pass", "")):
+                ensure_nas_mk()
+                invalidate()
+                bg(run_cycle, do_fetch=True)
+                return self._send(200, {"ok": True})
+            return self._send(200, {"ok": False, "error": "falsches Passwort"})
+        if path == "/api/vault/lock":
+            VAULT.lock(); invalidate()
+            return self._send(200, {"ok": True})
+        if path == "/api/vault/change":
+            ok = False
+            try:
+                ok = VAULT.change_pass(body.get("old", ""), body.get("new", ""))
+            except VaultError as e:
+                return self._send(400, {"ok": False, "error": str(e)})
+            return self._send(200, {"ok": ok})
+
+        # ----- everything below requires an unlocked vault -----
+        if self._locked():
+            return
+        if path == "/api/prepare":
+            return self._send(200, prepare_clip(body.get("id", "")))
         if path == "/api/keys":
             try:
-                norm = keybridge.normalize_results(json.loads(raw or b"{}"))
-                stored = keystore.merge(KEYS_FILE, norm)
+                norm = keybridge.normalize_results(body)
+                stored = VAULT.merge_keys(norm)
             except Exception as e:
                 return self._send(400, {"ok": False, "error": str(e)})
             if stored:
                 invalidate()
-            if AUTO_DECRYPT:
-                bg(run_cycle, do_fetch=False, do_decrypt=True)
             return self._send(200, {"ok": True, "stored": stored})
         if path == "/api/fetch":
-            bg(run_cycle, do_fetch=True, do_decrypt=False)
-            return self._send(200, {"ok": True})
-        if path == "/api/decrypt":
-            bg(ensure_all)
+            bg(run_cycle, do_fetch=True)
             return self._send(200, {"ok": True})
         if path == "/api/thumbs_all":
             bg(gen_all_thumbs)
@@ -871,8 +1119,8 @@ class H(BaseHTTPRequestHandler):
             return self._send(200, {"ok": True})
         if path == "/api/login/exchange":
             try:
-                tok = auth.exchange_code(json.loads(raw or b"{}").get("callback", ""))
-                bg(run_cycle, do_fetch=True, do_decrypt=False)
+                tok = auth.exchange_code(body.get("callback", ""))
+                bg(run_cycle, do_fetch=True)
                 return self._send(200, {"ok": True, "refresh": bool(tok.get("refresh_token"))})
             except Exception as e:
                 return self._send(400, {"ok": False, "error": str(e)})
@@ -901,18 +1149,22 @@ if __name__ == "__main__":
     ENC_PREFIX = os.path.relpath(SRC_DIR, SCAN_DIR).replace("\\", "/")
     if ENC_PREFIX in (".", ""):
         ENC_PREFIX = ""
-    KEYS_FILE = a.keys or keystore.default_path(SRC_DIR)
+    KEYS_FILE = ""                       # no plaintext keystore file — vault only
     INTERVAL = a.interval
     DELETE = a.delete
-    AUTO_DECRYPT = not a.no_auto_decrypt
+    AUTO_DECRYPT = False                  # never mass-decrypt to disk; on demand only
     EMBED_KEY = a.embed_key
     DIRECT_API = not a.no_direct_api
-    auth = TeslaAuth(os.path.join(DATA_DIR, "token_store.json"))
+    VAULT = Vault(DATA_DIR)               # vault.enc / vault.wrap live in DATA_DIR (stick)
+    auth = TeslaAuth(VAULT)
+    SIDECAR_DIR = os.path.join(DATA_DIR, "keysidecars")
     os.makedirs(os.path.join(OUT_DIR, ".thumbs"), exist_ok=True)
-    _META_CACHE_FILE = os.path.join(DATA_DIR, ".meta_cache.json")
+    # meta cache holds GPS-derived data -> keep it in the ephemeral tmpfs OUT_DIR,
+    # never on the stick.
+    _META_CACHE_FILE = os.path.join(OUT_DIR, ".meta_cache.json")
     _load_meta_cache()
     threading.Thread(target=scheduler, daemon=True).start()
     print(f"Viewer :{a.port} scan={SCAN_DIR} enc={SRC_DIR} (prefix='{ENC_PREFIX}') "
-          f"out={OUT_DIR} keys={KEYS_FILE} auto_decrypt={AUTO_DECRYPT} "
+          f"out={OUT_DIR} vault={'present' if VAULT.has_vault() else 'none'} "
           f"embed={EMBED_KEY} direct_api={DIRECT_API}", flush=True)
     ThreadingHTTPServer(("0.0.0.0", a.port), H).serve_forever()

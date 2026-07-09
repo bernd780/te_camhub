@@ -29,9 +29,11 @@ def _post_form(url: str, data: dict) -> dict:
 
 
 class TeslaAuth:
-    def __init__(self, store_path: str):
-        self.store_path = store_path
-        self.pkce_path = store_path + ".pkce"
+    """Token is stored ONLY in the encrypted vault (never in a plaintext file).
+    A vault object with get_token()/set_token() is injected; PKCE verifier/state
+    are kept in RAM only (same process handles url + callback)."""
+    def __init__(self, vault):
+        self.vault = vault
         self._pkce = None
 
     def make_login_url(self) -> str:
@@ -39,16 +41,12 @@ class TeslaAuth:
         challenge = _b64url(hashlib.sha256(verifier.encode()).digest())
         state = _b64url(secrets.token_bytes(16))
         self._pkce = (verifier, state)
-        json.dump({"v": verifier, "s": state}, open(self.pkce_path, "w"))
         q = {"client_id": CLIENT_ID, "redirect_uri": REDIRECT, "response_type": "code",
              "scope": SCOPE, "state": state,
              "code_challenge": challenge, "code_challenge_method": "S256"}
         return f"{AUTH}/authorize?" + urllib.parse.urlencode(q)
 
     def exchange_code(self, callback_url: str) -> dict:
-        if not self._pkce and os.path.exists(self.pkce_path):
-            p = json.load(open(self.pkce_path))
-            self._pkce = (p["v"], p["s"])
         if not self._pkce:
             raise RuntimeError("call make_login_url() first")
         verifier, state = self._pkce
@@ -90,12 +88,11 @@ class TeslaAuth:
     def _save(self, tok: dict):
         tok = dict(tok)
         tok["_expires_at"] = time.time() + int(tok.get("expires_in", 28800))
-        json.dump(tok, open(self.store_path, "w"))
+        self.vault.set_token(tok)
 
     def _load(self):
-        if os.path.exists(self.store_path):
-            try:
-                return json.load(open(self.store_path))
-            except Exception:
-                return None
-        return None
+        try:
+            tok = self.vault.get_token()
+        except Exception:
+            return None
+        return tok or None
