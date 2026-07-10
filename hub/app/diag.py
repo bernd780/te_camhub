@@ -205,6 +205,49 @@ def ble_test_role(name, role):
     return {"ok": True, "detail": detail}
 
 
+BLE_PROBE_COMMANDS = [
+    ("Ladezustand lesen", ["state", "charge"]),
+    ("Verriegelung/Türen lesen", ["state", "closures"]),
+    ("Basiszustand lesen (VCSEC, auch bei schlafendem Auto)", ["body-controller-state"]),
+    ("Ladeport öffnen", ["charge-port-open"]),
+    ("Ladeport schließen", ["charge-port-close"]),
+    ("Laden starten", ["charging-start"]),
+    ("Laden stoppen", ["charging-stop"]),
+    ("Auto aufwecken", ["wake"]),
+    ("Hupen", ["honk"]),
+    ("Lichter blinken", ["flash-lights"]),
+]
+
+
+def ble_probe_role(name):
+    """Empirically determine which commands a paired key can actually
+    execute against the real vehicle: try a curated list of representative
+    commands (reads plus a few benign/reversible actions) and record the
+    vehicle's real response, rather than relying on Tesla's documentation
+    of what a role "should" be allowed to do.
+
+    Deliberately excludes commands with persistent or safety-relevant
+    effects (lock/unlock, climate, valet/guest mode, key management,
+    windows, ...) even though the role is expected to be rejected for
+    them -- an unexpected authorization succeeding there isn't a risk
+    worth taking just to confirm a boundary."""
+    vin = hubconf.getval("TESLA_BLE_VIN")
+    if not vin:
+        return {"ok": False, "error": "Fahrzeug-VIN erst eintragen und speichern"}
+    priv, _pub = _ble_keypath(name)
+    if not os.path.isfile(priv):
+        return {"ok": False, "error": "noch nicht gekoppelt"}
+    base = [f"{BLE_BIN}/tesla-control", "-ble", "-vin", vin.upper(), "-key-file", priv]
+    results = []
+    for label, args in BLE_PROBE_COMMANDS:
+        r = subprocess.run(base + args, capture_output=True, text=True, timeout=30)
+        ok = r.returncode == 0
+        lines = (r.stderr or r.stdout or "").strip().splitlines()
+        detail = lines[-1] if lines else ("OK" if ok else "Fehler")
+        results.append({"label": label, "ok": ok, "detail": detail[:200]})
+    return {"ok": True, "results": results}
+
+
 def ble_status_role(name):
     vin = hubconf.getval("TESLA_BLE_VIN")
     priv, _pub = _ble_keypath(name)

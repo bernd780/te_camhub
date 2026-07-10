@@ -464,21 +464,16 @@ async function viewBle(m){
       <div class="note">BLE-Schlüssel werden mit einer <b>Rolle</b> gekoppelt, die festlegt, was der Schlüssel darf. Statt wie früher immer mit vollem "Owner"-Zugriff zu koppeln, lassen sich hier gezielt eingeschränkte Rollen für getrennte Zwecke koppeln (jede Rolle = ein eigener, unabhängiger Schlüssel).</div>
       <div class="ble-row">
         <div><b>Wachhalten</b> <span class="note">(Rolle: charging_manager — darf laut Tesla Lade-Befehle autorisieren, u.a. Ladeport öffnen/schließen)</span></div>
-        <div class="saverow">
+        <div class="saverow" style="flex-wrap:wrap">
           <button class="btn sm ghost" id="blepair_awake">Koppeln</button>
           <button class="btn sm ghost" id="bletest_awake">Testen (Ladeport auf/zu)</button>
+          <button class="btn sm ghost" id="bleprobe_awake">Befehle ermitteln</button>
           <span class="note" id="blemsg_awake">–</span>
         </div>
+        <div id="bleprobe_awake_results"></div>
       </div>
-      <div class="ble-row">
-        <div><b>Telemetrie lesen</b> <span class="note">(Rolle: vehicle_monitor — nur Lesen, keine Befehle)</span></div>
-        <div class="saverow">
-          <button class="btn sm ghost" id="blepair_monitor">Koppeln</button>
-          <button class="btn sm ghost" id="bletest_monitor">Testen (Status lesen)</button>
-          <span class="note" id="blemsg_monitor">–</span>
-        </div>
-      </div>
-      <div class="note warn">⚠ Sicherheitshinweis: Laut Teslas offizieller Protokoll-Doku darf <code>charging_manager</code> "Befehle autorisieren, die das Laden betreffen" (u.a. Ladeport) und <code>vehicle_monitor</code> nur lesen, aber keine Befehle autorisieren — ob charging_manager damit auch ein bereits schlafendes Auto zuverlässig aufweckt, ist am eigenen Auto zu testen (Button "Testen" oben). Jeder gekoppelte private Schlüssel liegt unverschlüsselt als Datei auf dem Stick (<code>/root/.ble/&lt;name&gt;/key_private.pem</code>); wer physischen Zugriff auf den Stick bekommt, könnte ihn kopieren und (nur in Bluetooth-Reichweite des Autos) im Rahmen seiner Rolle missbrauchen. Empfehlung: <b>PIN-to-Drive</b> im Auto aktivieren und bei Verlust/Diebstahl des Sticks alle BLE-Schlüssel sofort in der Tesla-App entfernen.</div>
+      <div class="note">Die Rolle <code>vehicle_monitor</code> wird hier nicht mehr angeboten. Falls sie vorher schon gekoppelt wurde, bleibt der Schlüssel bis auf Weiteres auf dem Auto eingetragen — unsere eingeschränkten Schlüssel können sich nicht selbst entfernen. Entfernen geht nur über die Tesla-App (Sicherheit &amp; Fahrzeugzugriff → Schlüssel) oder am Touchscreen.</div>
+      <div class="note warn">⚠ Sicherheitshinweis: Laut Teslas offizieller Protokoll-Doku darf <code>charging_manager</code> nur "Befehle autorisieren, die das Laden betreffen". "Befehle ermitteln" oben prüft das empirisch am echten Auto mit einer bewusst harmlosen Befehlsauswahl (Lesen, Ladeport, Laden, Hupen, Lichter, Aufwecken) — sicherheitsrelevante Befehle wie Ver-/Entriegeln werden absichtlich nicht getestet. Jeder gekoppelte private Schlüssel liegt unverschlüsselt als Datei auf dem Stick (<code>/root/.ble/&lt;name&gt;/key_private.pem</code>); wer physischen Zugriff auf den Stick bekommt, könnte ihn kopieren und (nur in Bluetooth-Reichweite des Autos) im Rahmen seiner Rolle missbrauchen. Empfehlung: <b>PIN-to-Drive</b> im Auto aktivieren und bei Verlust/Diebstahl des Sticks alle BLE-Schlüssel sofort in der Tesla-App entfernen.</div>
     </div>`;
   m.append(box);
   $("#blevinsave").onclick=async()=>{
@@ -529,14 +524,30 @@ async function viewBle(m){
       }
     };
   }
+  function wireBleProbe(id,name){
+    $("#bleprobe_"+id).onclick=async()=>{
+      const out=$("#bleprobe_"+id+"_results");
+      $("#blemsg_"+id).textContent="ermittle Befehle… (mehrere Sekunden)";
+      out.innerHTML="";
+      try{
+        const r=await jpost("api/ble/probe",{name});
+        if(!r.ok){$("#blemsg_"+id).textContent="✗ "+(r.error||"Fehler");return;}
+        $("#blemsg_"+id).textContent="✓ Ermittlung abgeschlossen";
+        out.innerHTML=`<table class="probe"><tbody>${r.results.map(x=>
+          `<tr><td>${x.ok?"✓":"✗"}</td><td>${x.label}</td><td class="note">${x.detail||""}</td></tr>`
+        ).join("")}</tbody></table>`;
+      }catch(e){
+        $("#blemsg_"+id).textContent="✗ Verbindungsfehler – bitte erneut versuchen";
+      }
+    };
+  }
   wireBlePair("awake","awake","charging_manager");
-  wireBlePair("monitor","monitor","vehicle_monitor");
   wireBleTest("awake","awake","charging_manager");
-  wireBleTest("monitor","monitor","vehicle_monitor");
+  wireBleProbe("awake","awake");
   async function refreshBleStatus(id,name){
     try{const r=await jget("api/ble/status?name="+name);$("#blemsg_"+id).textContent=r.paired?"✓ gekoppelt":"noch nicht gekoppelt";}catch(e){}
   }
-  refreshBleStatus("awake","awake");refreshBleStatus("monitor","monitor");
+  refreshBleStatus("awake","awake");
 }
 
 async function viewSettings(m){
