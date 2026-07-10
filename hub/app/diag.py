@@ -124,14 +124,18 @@ def _ble_ensure_key(name):
         return {"ok": True, "already": True}
     if not ble_binaries_installed():
         return {"ok": False, "error": "BLE-Programme erst installieren"}
-    os.makedirs(os.path.dirname(priv), exist_ok=True)
-    r = subprocess.run([f"{BLE_BIN}/tesla-keygen", "-key-file", priv, "-output", pub, "create"],
-                        capture_output=True, text=True, timeout=30)
-    if r.returncode != 0 or not (os.path.isfile(priv) and os.path.isfile(pub)):
-        return {"ok": False, "error": (r.stderr or "Schlüsselerzeugung fehlgeschlagen").strip()[:200]}
-    os.chmod(priv, 0o600)
-    os.chmod(pub, 0o644)
-    return {"ok": True}
+    subprocess.run(["mount", "/", "-o", "remount,rw"], capture_output=True)
+    try:
+        os.makedirs(os.path.dirname(priv), exist_ok=True)
+        r = subprocess.run([f"{BLE_BIN}/tesla-keygen", "-key-file", priv, "-output", pub, "create"],
+                            capture_output=True, text=True, timeout=30)
+        if r.returncode != 0 or not (os.path.isfile(priv) and os.path.isfile(pub)):
+            return {"ok": False, "error": (r.stderr or "Schlüsselerzeugung fehlgeschlagen").strip()[:200]}
+        os.chmod(priv, 0o600)
+        os.chmod(pub, 0o644)
+        return {"ok": True}
+    finally:
+        subprocess.run(["mount", "/", "-o", "remount,ro"], capture_output=True)
 
 
 def ble_pair_role(name, role):
