@@ -574,14 +574,22 @@ async function viewSettings(m){
     const r=await jget("api/nas/test");$("#nasmsg").textContent=r.ok?("✓ OK"+(r.writable?" (schreibbar)":" (nur lesbar)")):("✗ "+(r.error||"Fehler"));};
   $("#bleinstall").onclick=async()=>{
     $("#bleinstallmsg").textContent="installiere… (kann eine Weile dauern)";
-    const r=await jpost("api/ble/install",{});
-    $("#bleinstallmsg").textContent=r.ok?(r.already?"✓ bereits installiert":"✓ installiert"):"✗ "+(r.error||"Fehler");
+    try{
+      const r=await jpost("api/ble/install",{});
+      $("#bleinstallmsg").textContent=r.ok?(r.already?"✓ bereits installiert":"✓ installiert"):"✗ "+(r.error||"Fehler");
+    }catch(e){
+      $("#bleinstallmsg").textContent="✗ Verbindungsfehler – bitte erneut versuchen";
+    }
   };
   function wireBlePair(id,name,role){
     $("#blepair_"+id).onclick=async()=>{
       $("#blemsg_"+id).textContent="koppele…";
-      const r=await jpost("api/ble/pair",{name,role});
-      $("#blemsg_"+id).textContent=r.ok?"Anfrage gesendet – jetzt am Auto Schlüsselkarte an die Konsole halten und am Bildschirm bestätigen":"✗ "+(r.error||"Fehler");
+      try{
+        const r=await jpost("api/ble/pair",{name,role});
+        $("#blemsg_"+id).textContent=r.ok?"Anfrage gesendet – jetzt am Auto Schlüsselkarte an die Konsole halten und am Bildschirm bestätigen":"✗ "+(r.error||"Fehler");
+      }catch(e){
+        $("#blemsg_"+id).textContent="✗ Verbindungsfehler – bitte erneut versuchen";
+      }
     };
   }
   wireBlePair("awake","awake","charging_manager");

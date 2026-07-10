@@ -467,9 +467,15 @@ class H(BaseHTTPRequestHandler):
         if path == "/api/sync":
             return self._json(200, diag.trigger_sync())
         if path == "/api/ble/install":
-            return self._json(200, diag.install_ble_binaries())
+            try:
+                return self._json(200, diag.install_ble_binaries())
+            except Exception as e:
+                return self._json(200, {"ok": False, "error": str(e)[:300]})
         if path == "/api/ble/pair":
-            return self._json(200, diag.ble_pair_role(body.get("name", ""), body.get("role", "")))
+            try:
+                return self._json(200, diag.ble_pair_role(body.get("name", ""), body.get("role", "")))
+            except Exception as e:
+                return self._json(200, {"ok": False, "error": str(e)[:300]})
         if path == "/api/nas/sync_status/refresh":
             threading.Thread(target=lambda: nassync.refresh_status(CFG["scan"]), daemon=True).start()
             return self._json(200, {"ok": True})
