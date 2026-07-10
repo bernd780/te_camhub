@@ -283,6 +283,74 @@ BLE_UNTESTED_COMMANDS = [
 ]
 
 
+# Static result of the empirical probe above, confirmed 2026-07-10 against
+# a real charging_manager key. The role -> allowed-commands mapping is
+# defined by the vehicle firmware, not by anything on this stick, so once
+# confirmed it doesn't need to be re-tested against the car on every page
+# load. Use ble_probe_role() to re-verify for real (e.g. if Tesla ever
+# changes the role/permission model). Labels must match BLE_PROBE_COMMANDS.
+BLE_KNOWN_RESULTS = {
+    "charging_manager": {
+        "Ladezustand lesen": True,
+        "Verriegelung/Türen lesen": True,
+        "Klimazustand lesen": True,
+        "Reifendruck lesen": True,
+        "Standort lesen": True,
+        "Fahrzustand lesen": True,
+        "Medienstatus lesen": True,
+        "Medien-Details lesen": True,
+        "Lade-Zeitplan lesen": True,
+        "Vorklimatisierungs-Zeitplan lesen": True,
+        "Software-Update-Status lesen": True,
+        "Kindersicherung-Status lesen": True,
+        "Basiszustand lesen (VCSEC, auch bei schlafendem Auto)": True,
+        "Alle Schlüssel auflisten": True,
+        "Erreichbarkeit prüfen (ping)": True,
+        "Ladeport öffnen": True,
+        "Ladeport schließen": True,
+        "Laden starten": True,
+        "Laden stoppen": True,
+        "Ladegrenze setzen (aktueller Wert, kein Effekt)": True,
+        "Ladestrom setzen (aktueller Wert, kein Effekt)": True,
+        "Lade-Zeitplan abbrechen": True,
+        "Auto aufwecken": True,
+        "Hupen": True,
+        "Lichter blinken": True,
+        "Zubehör-Stromversorgung an": True,
+        "Zubehör-Stromversorgung aus": True,
+        "Lautstärke lauter": False,
+        "Lautstärke leiser": False,
+        "Nächster Titel": False,
+        "Vorheriger Titel": False,
+        "Play/Pause": False,
+        "Nächster Favorit": False,
+        "Vorheriger Favorit": False,
+        "Entriegeln": False,
+        "Fenster einen Spalt öffnen": False,
+        "Fenster schließen": False,
+        "Klima einschalten": False,
+        "Klima ausschalten": False,
+        "Sentry-Modus an": False,
+        "Sentry-Modus aus": False,
+        "Tonneau öffnen (nur Cybertruck)": False,
+        "Lenkradheizung aus": False,
+    },
+}
+
+assert set(BLE_KNOWN_RESULTS["charging_manager"]) == {l for l, _ in BLE_PROBE_COMMANDS}, \
+    "BLE_KNOWN_RESULTS must have exactly one entry per BLE_PROBE_COMMANDS label"
+
+
+def ble_known_capabilities(role):
+    """Instant, no-vehicle-contact lookup of what a role is known to be
+    able to do, based on the empirical probe result above. Falls back to
+    an empty (unknown) result for roles never probed."""
+    return {
+        "results": [{"label": l, "ok": ok} for l, ok in BLE_KNOWN_RESULTS.get(role, {}).items()],
+        "untested": [{"label": l, "reason": r} for l, r in BLE_UNTESTED_COMMANDS],
+    }
+
+
 def ble_probe_role(name):
     """Empirically determine which commands a paired key can actually
     execute against the real vehicle: try every command in
