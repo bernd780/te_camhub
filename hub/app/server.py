@@ -415,6 +415,11 @@ class H(BaseHTTPRequestHandler):
             return self._json(200, diag.ble_status_role(self._qs("name")))
         if path == "/api/nas/raw_keys/pairing":
             return self._json(200, nassync.pairing_status(CFG["state"]))
+        if path == "/api/ble/commands":
+            return self._json(200, {
+                "reads": [{"id": i, "label": l} for i, (l, _a) in diag.BLE_READS.items()],
+                "actions": [{"id": i, "label": l} for i, (l, _a) in diag.BLE_ACTIONS.items()],
+            })
         return self._json(404, {"error": "not found"})
 
     def do_POST(self):
@@ -528,11 +533,6 @@ class H(BaseHTTPRequestHandler):
                 return self._json(200, diag.ble_known_capabilities(body.get("role", "")))
             except Exception as e:
                 return self._json(200, {"ok": False, "error": str(e)[:300]})
-        if path == "/api/ble/commands":
-            return self._json(200, {
-                "reads": [{"id": i, "label": l} for i, (l, _a) in diag.BLE_READS.items()],
-                "actions": [{"id": i, "label": l} for i, (l, _a) in diag.BLE_ACTIONS.items()],
-            })
         if path == "/api/ble/read":
             try:
                 return self._json(200, diag.ble_read(body.get("name", ""), body.get("id", "")))
