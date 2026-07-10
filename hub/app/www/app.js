@@ -518,37 +518,68 @@ async function viewBle(m){
     if(r.paired){$("#blemsg_"+id).textContent="✓ gekoppelt";loadBleCommands(id);return;}
     setTimeout(()=>pollBlePaired(id,name,triesLeft-1,delayMs,role),delayMs);
   }
+  const bleValues={};
+  const BLE_ACTION_STATUS={
+    charge_port_open:{read:"charge",field:"chargePortDoorOpen",label:v=>v?"offen":"geschlossen"},
+    charge_port_close:{read:"charge",field:"chargePortDoorOpen",label:v=>v?"offen":"geschlossen"},
+    charging_start:{read:"charge",field:"chargingState",label:v=>v},
+    charging_stop:{read:"charge",field:"chargingState",label:v=>v},
+  };
+  const BLE_ACTION_PREFILL={
+    charging_set_limit:{read:"charge",field:"chargeLimitSoc"},
+    charging_set_amps:{read:"charge",field:"chargingAmps"},
+  };
+  function applyActionStatus(actionId){
+    const spec=BLE_ACTION_STATUS[actionId];
+    const elMsg=$("#bleactstatus_"+actionId);
+    if(elMsg&&spec){
+      const vals=bleValues[spec.read];
+      elMsg.textContent=(vals&&spec.field in vals)?("Status: "+spec.label(vals[spec.field])):"";
+    }
+    const prefill=BLE_ACTION_PREFILL[actionId];
+    const inputEl=$("#bleval_"+actionId);
+    if(inputEl&&prefill&&!inputEl.value){
+      const vals=bleValues[prefill.read];
+      if(vals&&prefill.field in vals)inputEl.value=vals[prefill.field];
+    }
+  }
+  async function doBleRead(id,readId){
+    $("#blereadmsg_"+readId).textContent="lese…";
+    try{
+      const r=await jpost("api/ble/read",{name:id,id:readId});
+      if(!r.ok){$("#blereadmsg_"+readId).textContent="✗ "+(r.error||"Fehler");return;}
+      $("#blereadmsg_"+readId).textContent="✓";
+      bleValues[readId]=r.values||{};
+      const entries=Object.entries(r.values||{});
+      $("#blereadvals_"+readId).innerHTML=entries.length?`<table class="probe"><tbody>${entries.map(([k,v])=>
+        `<tr><td>${k}</td><td class="note">${v}</td></tr>`).join("")}</tbody></table>`:"";
+      Object.keys(BLE_ACTION_STATUS).concat(Object.keys(BLE_ACTION_PREFILL)).forEach(applyActionStatus);
+    }catch(e){$("#blereadmsg_"+readId).textContent="✗ Verbindungsfehler";}
+  }
   async function loadBleCommands(id){
     let cmds;try{cmds=await jget("api/ble/commands");}catch(e){return;}
     const readsList=$("#ble_reads_list"),actionsList=$("#ble_actions_list");
     readsList.innerHTML=cmds.reads.map(c=>`
       <div class="ble-row">
         <div>${c.label}</div>
-        <div class="saverow"><button class="btn sm ghost" id="bleread_${c.id}">Lesen</button><span class="note" id="blereadmsg_${c.id}"></span></div>
+        <div class="saverow"><button class="btn sm ghost" id="bleread_${c.id}">Lesen</button><span class="note" id="blereadmsg_${c.id}">lädt…</span></div>
         <div id="blereadvals_${c.id}" style="width:100%"></div>
       </div>`).join("");
-    actionsList.innerHTML=cmds.actions.map(c=>`
+    actionsList.innerHTML=cmds.actions.map(c=>{
+      const hasStatus=c.id in BLE_ACTION_STATUS, noStatus=(c.id==="keep_accessory_power_on"||c.id==="keep_accessory_power_off");
+      return `
       <div class="ble-row">
-        <div>${c.label}</div>
+        <div>${c.label}${noStatus?' <span class="note">(kein Lesebefehl für Status vorhanden)</span>':''}</div>
         <div class="saverow">
           ${(c.id==="charging_set_limit"||c.id==="charging_set_amps")?`<input type="number" id="bleval_${c.id}" style="width:80px" placeholder="${c.id==='charging_set_limit'?'%':'A'}">`:""}
           <button class="btn sm ghost" id="bleact_${c.id}">Ausführen</button>
           <span class="note" id="bleactmsg_${c.id}"></span>
+          ${hasStatus?`<span class="note" id="bleactstatus_${c.id}"></span>`:""}
         </div>
-      </div>`).join("");
+      </div>`;
+    }).join("");
     cmds.reads.forEach(c=>{
-      $("#bleread_"+c.id).onclick=async()=>{
-        $("#blereadmsg_"+c.id).textContent="lese…";
-        $("#blereadvals_"+c.id).innerHTML="";
-        try{
-          const r=await jpost("api/ble/read",{name:id,id:c.id});
-          if(!r.ok){$("#blereadmsg_"+c.id).textContent="✗ "+(r.error||"Fehler");return;}
-          $("#blereadmsg_"+c.id).textContent="✓";
-          const entries=Object.entries(r.values||{});
-          $("#blereadvals_"+c.id).innerHTML=entries.length?`<table class="probe"><tbody>${entries.map(([k,v])=>
-            `<tr><td>${k}</td><td class="note">${v}</td></tr>`).join("")}</tbody></table>`:"";
-        }catch(e){$("#blereadmsg_"+c.id).textContent="✗ Verbindungsfehler";}
-      };
+      $("#bleread_"+c.id).onclick=()=>doBleRead(id,c.id);
     });
     cmds.actions.forEach(c=>{
       $("#bleact_"+c.id).onclick=async()=>{
@@ -564,6 +595,9 @@ async function viewBle(m){
     });
     $("#ble_reads_card").style.display="";
     $("#ble_actions_card").style.display="";
+    for(const c of cmds.reads){
+      await doBleRead(id,c.id);
+    }
   }
   wireBlePair("awake","awake","charging_manager");
   async function refreshBleStatus(id,name){
