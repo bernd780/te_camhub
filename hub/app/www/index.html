@@ -21,6 +21,13 @@
     <label class="row hidden" id="auth_import_l"><input type="checkbox" id="auth_import" checked> vorhandene Schlüssel importieren</label>
     <button class="btn primary" id="auth_go">Anmelden</button>
     <div class="msg" id="auth_msg"></div>
+    <a href="#" class="note" id="auth_forgot" style="display:block;margin-top:16px">Passwort vergessen?</a>
+    <div class="hidden" id="auth_reset_panel" style="margin-top:10px;text-align:left">
+      <p class="note warn">⚠ Setzt den Tresor komplett zurück: alle bisher abgerufenen Entschlüsselungs-Schlüssel und der Tesla-Login gehen unwiderruflich verloren. Bereits archivierte Aufnahmen auf dem NAS bleiben erhalten, ihre Schlüssel müssten aber neu von Tesla abgerufen werden. Zum Bestätigen <code>ZURUECKSETZEN</code> eintippen:</p>
+      <input type="text" id="auth_reset_confirm" placeholder="ZURUECKSETZEN">
+      <button class="btn danger" id="auth_reset_go">Tresor endgültig zurücksetzen</button>
+      <div class="msg" id="auth_reset_msg"></div>
+    </div>
   </div>
 </div>
 

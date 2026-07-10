@@ -2,7 +2,7 @@
 const $=s=>document.querySelector(s);
 const el=(t,c,h)=>{const e=document.createElement(t);if(c)e.className=c;if(h!=null)e.innerHTML=h;return e;};
 const api=async(path,opts)=>{const r=await fetch(path,Object.assign({credentials:"same-origin"},opts||{}));
-  if(r.status===401){showAuth();throw new Error("auth");}return r;};
+  if(r.status===401){boot();throw new Error("auth");}return r;};
 const jget=async p=>(await api(p)).json();
 const jpost=async(p,b)=>(await api(p,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(b||{})})).json();
 function toast(t){const el=$("#toast");el.textContent=t;el.classList.add("show");setTimeout(()=>el.classList.remove("show"),2200);}
@@ -24,8 +24,22 @@ function showAuth(st){
   $("#auth_import_l").classList.toggle("hidden",!SETUP);
   $("#auth_go").textContent=SETUP?"Einrichten":"Anmelden";
   $("#auth_pass").value="";$("#auth_pass2").value="";$("#auth_msg").textContent="";
+  $("#auth_forgot").classList.toggle("hidden",SETUP);
+  $("#auth_reset_panel").classList.add("hidden");
+  $("#auth_reset_confirm").value="";$("#auth_reset_msg").textContent="";
   $("#auth_pass").focus();
 }
+$("#auth_forgot").onclick=(e)=>{e.preventDefault();$("#auth_reset_panel").classList.toggle("hidden");};
+$("#auth_reset_go").onclick=async()=>{
+  const m=$("#auth_reset_msg");m.className="msg";
+  if($("#auth_reset_confirm").value!=="ZURUECKSETZEN"){m.className="msg err";m.textContent="Bitte ZURUECKSETZEN genau eintippen";return;}
+  m.textContent="setze zurück…";
+  try{
+    const r=await jpost("api/vault/factory_reset",{confirm:$("#auth_reset_confirm").value});
+    if(r.ok){toast("Tresor zurückgesetzt");boot();}
+    else{m.className="msg err";m.textContent=r.error||"Fehler";}
+  }catch(e){m.className="msg err";m.textContent="Verbindungsfehler";}
+};
 async function doAuth(){
   const m=$("#auth_msg");m.className="msg";
   const p=$("#auth_pass").value;if(!p){m.textContent="Passwort erforderlich";return;}
@@ -521,8 +535,6 @@ async function viewBle(m){
   }
   const bleValues={};
   const BLE_ACTION_STATUS={
-    charge_port_open:{read:"charge",field:"chargePortDoorOpen",label:v=>v?"offen":"geschlossen"},
-    charge_port_close:{read:"charge",field:"chargePortDoorOpen",label:v=>v?"offen":"geschlossen"},
     charging_start:{read:"charge",field:"chargingState",label:v=>v},
     charging_stop:{read:"charge",field:"chargingState",label:v=>v},
   };

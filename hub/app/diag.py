@@ -176,222 +176,14 @@ def ble_pair_role(name, role):
     return {"ok": True}
 
 
-def ble_test_role(name, role):
-    """Actually exercise a paired key against the real vehicle instead of
-    just checking session-info, so pairing success is unambiguous:
-    - charging_manager: opens then closes the charge port (visible/audible
-      at the car -- also the real-world test of whether this role can wake
-      a sleeping vehicle).
-    - everything else (vehicle_monitor etc.): reads closures state
-      (locked, doors, sentry mode) over BLE, which works even while the
-      infotainment system is asleep."""
-    vin = hubconf.getval("TESLA_BLE_VIN")
-    if not vin:
-        return {"ok": False, "error": "Fahrzeug-VIN erst eintragen und speichern"}
-    priv, _pub = _ble_keypath(name)
-    if not os.path.isfile(priv):
-        return {"ok": False, "error": "noch nicht gekoppelt"}
-    base = [f"{BLE_BIN}/tesla-control", "-ble", "-vin", vin.upper(), "-key-file", priv]
-
-    if role == "charging_manager":
-        r1 = _tc_run(base + ["charge-port-open"])
-        if r1.returncode != 0:
-            return {"ok": False, "error": (r1.stderr or r1.stdout or "Ladeport öffnen fehlgeschlagen").strip()[:300]}
-        time.sleep(4)
-        r2 = _tc_run(base + ["charge-port-close"])
-        if r2.returncode != 0:
-            return {"ok": True, "detail": "Ladeport wurde geöffnet, Schließen aber fehlgeschlagen: "
-                                           + (r2.stderr or r2.stdout or "Fehler").strip()[:200]}
-        return {"ok": True, "detail": "Ladeport wurde geöffnet und wieder geschlossen -- am Auto sichtbar/hörbar gewesen?"}
-
-    r = _tc_run(base + ["state", "closures"])
-    if r.returncode != 0:
-        return {"ok": False, "error": (r.stderr or r.stdout or "Abfrage fehlgeschlagen").strip()[:300]}
-    try:
-        data = json.loads(r.stdout).get("closuresState", {})
-        locked = data.get("locked")
-        sentry = next(iter((data.get("sentryModeState") or {}).keys()), "?")
-        ts = data.get("timestamp", "")
-        detail = f"Fahrzeug hat geantwortet -- verriegelt: {'ja' if locked else 'nein'}, Sentry: {sentry}, Stand: {ts}"
-    except Exception:
-        detail = (r.stdout or "").strip()[:300]
-    return {"ok": True, "detail": detail}
-
-
-# Every command tried against the real vehicle to empirically determine
-# what a paired key's role can actually do -- confirmed 2026-07-10 against
-# a real charging_manager key. Read commands always succeed; actuation
-# commands outside the charging domain are consistently rejected by the
-# vehicle itself (INSUFFICIENT_PRIVILEGES / GENERICERROR_UNAUTHORIZED),
-# not merely by our own client -- exit code and vehicle error text are
-# authoritative, this isn't a guess.
-BLE_PROBE_COMMANDS = [
-    ("Ladezustand lesen", ["state", "charge"]),
-    ("Verriegelung/Türen lesen", ["state", "closures"]),
-    ("Klimazustand lesen", ["state", "climate"]),
-    ("Reifendruck lesen", ["state", "tire-pressure"]),
-    ("Standort lesen", ["state", "location"]),
-    ("Fahrzustand lesen", ["state", "drive"]),
-    ("Medienstatus lesen", ["state", "media"]),
-    ("Medien-Details lesen", ["state", "media-detail"]),
-    ("Lade-Zeitplan lesen", ["state", "charge-schedule"]),
-    ("Vorklimatisierungs-Zeitplan lesen", ["state", "precondition-schedule"]),
-    ("Software-Update-Status lesen", ["state", "software-update"]),
-    ("Kindersicherung-Status lesen", ["state", "parental-controls"]),
-    ("Basiszustand lesen (VCSEC, auch bei schlafendem Auto)", ["body-controller-state"]),
-    ("Alle Schlüssel auflisten", ["list-keys"]),
-    ("Erreichbarkeit prüfen (ping)", ["ping"]),
-    ("Ladeport öffnen", ["charge-port-open"]),
-    ("Ladeport schließen", ["charge-port-close"]),
-    ("Laden starten", ["charging-start"]),
-    ("Laden stoppen", ["charging-stop"]),
-    ("Ladegrenze setzen (aktueller Wert, kein Effekt)", ["charging-set-limit", "80"]),
-    ("Ladestrom setzen (aktueller Wert, kein Effekt)", ["charging-set-amps", "16"]),
-    ("Lade-Zeitplan abbrechen", ["charging-schedule-cancel"]),
-    ("Auto aufwecken", ["wake"]),
-    ("Hupen", ["honk"]),
-    ("Lichter blinken", ["flash-lights"]),
-    ("Zubehör-Stromversorgung an", ["keep-accessory-power", "on"]),
-    ("Zubehör-Stromversorgung aus", ["keep-accessory-power", "off"]),
-    ("Lautstärke lauter", ["media-volume-up"]),
-    ("Lautstärke leiser", ["media-volume-down"]),
-    ("Nächster Titel", ["media-next-track"]),
-    ("Vorheriger Titel", ["media-previous-track"]),
-    ("Play/Pause", ["media-toggle-playback"]),
-    ("Nächster Favorit", ["media-next-favorite"]),
-    ("Vorheriger Favorit", ["media-previous-favorite"]),
-    ("Entriegeln", ["unlock"]),
-    ("Fenster einen Spalt öffnen", ["windows-vent"]),
-    ("Fenster schließen", ["windows-close"]),
-    ("Klima einschalten", ["climate-on"]),
-    ("Klima ausschalten", ["climate-off"]),
-    ("Sentry-Modus an", ["sentry-mode", "on"]),
-    ("Sentry-Modus aus", ["sentry-mode", "off"]),
-    ("Tonneau öffnen (nur Cybertruck)", ["tonneau-open"]),
-    ("Lenkradheizung aus", ["steering-wheel-heater", "off"]),
-]
-
-# Commands that exist in tesla-control but are never auto-tested, with the
-# reason -- either the vehicle-side effect can't be reliably undone, the
-# command needs parameters we can't choose safely, or (key/software-update/
-# guest-data) the blast radius of an unexpected success is too high to
-# probe just for curiosity.
-BLE_UNTESTED_COMMANDS = [
-    ("Fernstart (drive)", "Risiko einer ungewollten Fahrzeugbewegung"),
-    ("Frunk öffnen", "kein Gegenbefehl zum Schließen vorhanden"),
-    ("Kofferraum öffnen/schließen/toggeln", "Schließen nicht auf allen Modellen verfügbar, Zustand nicht sicher wiederherstellbar"),
-    ("Sitzheizung setzen", "braucht Position + Stufe, zu viele Kombinationen"),
-    ("Zieltemperatur setzen", "braucht konkreten Temperaturwert"),
-    ("Auto-Sitz+Klima-Automatik", "verändert Komfort-Einstellungen ohne klaren Rückweg"),
-    ("Valet-Modus an/aus", "verändert Fahrzeugverhalten dauerhaft"),
-    ("Gast-Modus an/aus", "verändert Fahrzeugkonfiguration dauerhaft"),
-    ("Kindersicherung setzen/Geschwindigkeitslimit", "kann Fahrverhalten einschränken"),
-    ("Niedrig-Energie-Modus", "könnte Erreichbarkeit für weitere Tests verschlechtern"),
-    ("Lade-/Vorklimatisierungs-Zeitplan hinzufügen/entfernen", "braucht komplexe Parameter (Zeit, Ort)"),
-    ("Autosecure (nur Model X)", "schließt Flügeltüren und verriegelt -- deckt sich mit unlock-Test"),
-    ("Software-Update starten/abbrechen", "störend/destruktiv"),
-    ("Gastdaten löschen", "destruktiv"),
-    ("Schlüssel hinzufügen/entfernen/umbenennen", "sicherheitskritisch -- Risiko, eigenen Zugriff zu verlieren"),
-    ("Produktinfo / beliebiger API-Aufruf (get/post)", "braucht Fleet-API-OAuth-Token, über BLE nicht nutzbar"),
-]
-
-
-# Static result of the empirical probe above, confirmed 2026-07-10 against
-# a real charging_manager key. The role -> allowed-commands mapping is
-# defined by the vehicle firmware, not by anything on this stick, so once
-# confirmed it doesn't need to be re-tested against the car on every page
-# load. Use ble_probe_role() to re-verify for real (e.g. if Tesla ever
-# changes the role/permission model). Labels must match BLE_PROBE_COMMANDS.
-BLE_KNOWN_RESULTS = {
-    "charging_manager": {
-        "Ladezustand lesen": True,
-        "Verriegelung/Türen lesen": True,
-        "Klimazustand lesen": True,
-        "Reifendruck lesen": True,
-        "Standort lesen": True,
-        "Fahrzustand lesen": True,
-        "Medienstatus lesen": True,
-        "Medien-Details lesen": True,
-        "Lade-Zeitplan lesen": True,
-        "Vorklimatisierungs-Zeitplan lesen": True,
-        "Software-Update-Status lesen": True,
-        "Kindersicherung-Status lesen": True,
-        "Basiszustand lesen (VCSEC, auch bei schlafendem Auto)": True,
-        "Alle Schlüssel auflisten": True,
-        "Erreichbarkeit prüfen (ping)": True,
-        "Ladeport öffnen": True,
-        "Ladeport schließen": True,
-        "Laden starten": True,
-        "Laden stoppen": True,
-        "Ladegrenze setzen (aktueller Wert, kein Effekt)": True,
-        "Ladestrom setzen (aktueller Wert, kein Effekt)": True,
-        "Lade-Zeitplan abbrechen": True,
-        "Auto aufwecken": True,
-        "Hupen": True,
-        "Lichter blinken": True,
-        "Zubehör-Stromversorgung an": True,
-        "Zubehör-Stromversorgung aus": True,
-        "Lautstärke lauter": False,
-        "Lautstärke leiser": False,
-        "Nächster Titel": False,
-        "Vorheriger Titel": False,
-        "Play/Pause": False,
-        "Nächster Favorit": False,
-        "Vorheriger Favorit": False,
-        "Entriegeln": False,
-        "Fenster einen Spalt öffnen": False,
-        "Fenster schließen": False,
-        "Klima einschalten": False,
-        "Klima ausschalten": False,
-        "Sentry-Modus an": False,
-        "Sentry-Modus aus": False,
-        "Tonneau öffnen (nur Cybertruck)": False,
-        "Lenkradheizung aus": False,
-    },
-}
-
-assert set(BLE_KNOWN_RESULTS["charging_manager"]) == {l for l, _ in BLE_PROBE_COMMANDS}, \
-    "BLE_KNOWN_RESULTS must have exactly one entry per BLE_PROBE_COMMANDS label"
-
-
-def ble_known_capabilities(role):
-    """Instant, no-vehicle-contact lookup of what a role is known to be
-    able to do, based on the empirical probe result above. Falls back to
-    an empty (unknown) result for roles never probed."""
-    return {
-        "results": [{"label": l, "ok": ok} for l, ok in BLE_KNOWN_RESULTS.get(role, {}).items()],
-        "untested": [{"label": l, "reason": r} for l, r in BLE_UNTESTED_COMMANDS],
-    }
-
-
-def ble_probe_role(name):
-    """Empirically determine which commands a paired key can actually
-    execute against the real vehicle: try every command in
-    BLE_PROBE_COMMANDS and record the vehicle's real response, rather than
-    relying on Tesla's documentation of what a role "should" be allowed to
-    do. Includes both reads and actuation commands (some expected to be
-    rejected) -- see BLE_UNTESTED_COMMANDS for the ones deliberately left
-    out and why."""
-    vin = hubconf.getval("TESLA_BLE_VIN")
-    if not vin:
-        return {"ok": False, "error": "Fahrzeug-VIN erst eintragen und speichern"}
-    priv, _pub = _ble_keypath(name)
-    if not os.path.isfile(priv):
-        return {"ok": False, "error": "noch nicht gekoppelt"}
-    base = [f"{BLE_BIN}/tesla-control", "-ble", "-vin", vin.upper(), "-key-file", priv]
-    results = []
-    for label, args in BLE_PROBE_COMMANDS:
-        r = _tc_run(base + args)
-        ok = r.returncode == 0
-        lines = (r.stderr or r.stdout or "").strip().splitlines()
-        detail = lines[-1] if lines else ("OK" if ok else "Fehler")
-        results.append({"label": label, "ok": ok, "detail": detail[:200]})
-    return {"ok": True, "results": results,
-            "untested": [{"label": l, "reason": r} for l, r in BLE_UNTESTED_COMMANDS]}
-
-
-# Individually invokable BLE reads/actions -- restricted to exactly the
-# commands confirmed working in BLE_KNOWN_RESULTS above. id -> (label, args).
+# Individually invokable BLE reads/actions -- empirically confirmed working
+# against the real vehicle (charging_manager role). Commands that later
+# started failing with a privilege error (charge-port-open/close, honk,
+# flash-lights -- worked the morning this was built, rejected by the
+# vehicle a few hours later the same day, same key/role) were removed
+# rather than left in for _ble_unavailable to filter out at runtime, since
+# the user re-tested by hand and confirmed it's not transient.
+# id -> (label, args).
 BLE_READS = {
     "charge": ("Ladezustand", ["state", "charge"]),
     "closures": ("Verriegelung/Türen", ["state", "closures"]),
@@ -410,25 +202,23 @@ BLE_READS = {
     "ping": ("Erreichbarkeit", ["ping"]),
 }
 
+# charge_port_open/charge_port_close/honk/flash_lights were confirmed
+# working when this was first built (2026-07-10 morning), then confirmed by
+# the user to fail with INSUFFICIENT_PRIVILEGES a few hours later on the
+# same day, same role, same key -- Tesla's own docs warn role capabilities
+# "may change". Removed here rather than left to the runtime
+# _ble_unavailable filter, since the user re-tested by hand and this is now
+# a known, durable fact rather than a one-off failure to auto-recover from.
 BLE_ACTIONS = {
-    "charge_port_open": ("Ladeport öffnen", ["charge-port-open"]),
-    "charge_port_close": ("Ladeport schließen", ["charge-port-close"]),
     "charging_start": ("Laden starten", ["charging-start"]),
     "charging_stop": ("Laden stoppen", ["charging-stop"]),
     "charging_set_limit": ("Ladegrenze setzen", ["charging-set-limit", "80"]),
     "charging_set_amps": ("Ladestrom setzen", ["charging-set-amps", "16"]),
     "charging_schedule_cancel": ("Lade-Zeitplan abbrechen", ["charging-schedule-cancel"]),
     "wake": ("Auto aufwecken", ["wake"]),
-    "honk": ("Hupen", ["honk"]),
-    "flash_lights": ("Lichter blinken", ["flash-lights"]),
     "keep_accessory_power_on": ("Zubehör-Stromversorgung an", ["keep-accessory-power", "on"]),
     "keep_accessory_power_off": ("Zubehör-Stromversorgung aus", ["keep-accessory-power", "off"]),
 }
-
-
-_allowed_count = sum(1 for ok in BLE_KNOWN_RESULTS["charging_manager"].values() if ok)
-assert len(BLE_READS) + len(BLE_ACTIONS) == _allowed_count, \
-    "BLE_READS/BLE_ACTIONS must cover exactly the commands confirmed allowed in BLE_KNOWN_RESULTS"
 
 
 def _ble_base(name):

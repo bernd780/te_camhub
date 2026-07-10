@@ -75,6 +75,22 @@ class Vault:
             self._mk = None
             self._data = None
 
+    def factory_reset(self):
+        """Forgot-password recovery: irreversibly delete the vault (wrapped
+        master key + encrypted payload). There is no way to recover the old
+        contents without the passphrase anyway -- this just removes the
+        now-permanently-inaccessible files so /api/setup can create a fresh
+        vault. Already-archived encrypted clips on the NAS are untouched;
+        their keys would need to be re-fetched from Tesla after reset."""
+        with _lock:
+            self._mk = None
+            self._data = None
+            for p in (self.wrap_path, self.enc_path):
+                try:
+                    os.remove(p)
+                except FileNotFoundError:
+                    pass
+
     def _write_enc(self):
         os.makedirs(self.dir, exist_ok=True)
         payload = json.dumps(self._data, separators=(",", ":")).encode("utf-8")

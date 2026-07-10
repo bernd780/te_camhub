@@ -442,6 +442,14 @@ class H(BaseHTTPRequestHandler):
             VAULT.create(pw, import_keys=imp_k, import_token=imp_t)
             tok = _new_session(); _touch(); VIEWER.invalidate()
             return self._json(200, {"ok": True, "imported": len(imp_k)}, self._setcookie(tok))
+        if path == "/api/vault/factory_reset":
+            if not VAULT.has_vault():
+                return self._json(200, {"ok": False, "error": "kein Tresor vorhanden"})
+            if body.get("confirm") != "ZURUECKSETZEN":
+                return self._json(200, {"ok": False, "error": "Bestätigung fehlt"})
+            VAULT.factory_reset()
+            _drop_sessions(); VIEWER.clear_cache(); VIEWER.invalidate()
+            return self._json(200, {"ok": True})
         if path == "/api/login":
             if VAULT.unlock_with_pass(body.get("pass", "")):
                 tok = _new_session(); _touch(); VIEWER.invalidate()
@@ -518,21 +526,6 @@ class H(BaseHTTPRequestHandler):
         if path == "/api/ble/pair":
             try:
                 return self._json(200, diag.ble_pair_role(body.get("name", ""), body.get("role", "")))
-            except Exception as e:
-                return self._json(200, {"ok": False, "error": str(e)[:300]})
-        if path == "/api/ble/test":
-            try:
-                return self._json(200, diag.ble_test_role(body.get("name", ""), body.get("role", "")))
-            except Exception as e:
-                return self._json(200, {"ok": False, "error": str(e)[:300]})
-        if path == "/api/ble/probe":
-            try:
-                return self._json(200, diag.ble_probe_role(body.get("name", "")))
-            except Exception as e:
-                return self._json(200, {"ok": False, "error": str(e)[:300]})
-        if path == "/api/ble/capabilities":
-            try:
-                return self._json(200, diag.ble_known_capabilities(body.get("role", "")))
             except Exception as e:
                 return self._json(200, {"ok": False, "error": str(e)[:300]})
         if path == "/api/ble/read":

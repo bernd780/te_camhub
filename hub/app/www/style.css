@@ -32,6 +32,8 @@ input,select,textarea{font:inherit}
 .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff;width:100%;padding:12px}
 .btn.primary:hover{filter:brightness(1.06)}
 .btn.ghost{background:transparent}
+.btn.danger{background:var(--bad);border-color:var(--bad);color:#fff;width:100%;padding:12px}
+.btn.danger:hover{filter:brightness(1.1)}
 .btn.sm{padding:7px 11px;font-size:13px}
 .msg{min-height:18px;margin-top:10px;font-size:13px;color:var(--muted)}
 .msg.err{color:var(--bad)} .msg.ok{color:var(--ok)}
