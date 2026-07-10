@@ -692,6 +692,16 @@ function archive_clips () {
   /root/bin/disconnect-archive.sh
 }
 
+# archive_clips touches shared temp state (/tmp/sentry_files etc.) and the
+# cam mount, so only one caller may run it at a time. The main loop and
+# snapshotloop both call this wrapper instead of archive_clips directly.
+function archive_lock_and_run () {
+  (
+    flock -x -w 60 201 || { log "archive lock busy, skipping this pass"; exit 0; }
+    archive_clips
+  ) 201>/tmp/teslausb_archive.lock
+}
+
 function slowblink () {
   echo timer > "$STATUSLED/trigger" || return 0
   echo 900 > "$STATUSLED/delay_off"
@@ -736,6 +746,11 @@ function snapshotloop {
     sleep "${SNAPSHOT_INTERVAL:-3480}"
     /root/bin/waitforidle || true
     /root/bin/make_snapshot.sh
+    if archive_is_reachable
+    then
+      log "NAS reachable after periodic snapshot, archiving now"
+      archive_lock_and_run
+    fi
   done
 }
 
@@ -869,7 +884,7 @@ then
 
   /root/bin/awake_start || true
 
-  archive_clips
+  archive_lock_and_run
 
   /root/bin/awake_stop || true
 
