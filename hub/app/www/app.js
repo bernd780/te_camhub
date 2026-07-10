@@ -466,13 +466,19 @@ async function viewBle(m){
         <div><b>Wachhalten</b> <span class="note">(Rolle: charging_manager)</span></div>
         <div class="saverow" style="flex-wrap:wrap">
           <button class="btn sm ghost" id="blepair_awake">Koppeln</button>
-          <button class="btn sm ghost" id="bletest_awake">Testen (Ladeport auf/zu)</button>
           <span class="note" id="blemsg_awake">–</span>
         </div>
-        <div id="bleprobe_awake_results"></div>
       </div>
       <div class="note">Die Rolle <code>vehicle_monitor</code> wird hier nicht mehr angeboten. Falls sie vorher schon gekoppelt wurde, bleibt der Schlüssel bis auf Weiteres auf dem Auto eingetragen — unsere eingeschränkten Schlüssel können sich nicht selbst entfernen. Entfernen geht nur über die Tesla-App (Sicherheit &amp; Fahrzeugzugriff → Schlüssel) oder am Touchscreen.</div>
       <div class="note warn">⚠ Sicherheitshinweis: Jeder gekoppelte private Schlüssel liegt unverschlüsselt als Datei auf dem Stick (<code>/root/.ble/&lt;name&gt;/key_private.pem</code>); wer physischen Zugriff auf den Stick bekommt, könnte ihn kopieren und (nur in Bluetooth-Reichweite des Autos) im Rahmen seiner Rolle missbrauchen. Empfehlung: <b>PIN-to-Drive</b> im Auto aktivieren und bei Verlust/Diebstahl des Sticks alle BLE-Schlüssel sofort in der Tesla-App entfernen.</div>
+    </div>
+    <div class="card" id="ble_reads_card" style="display:none"><h3>Sensoren (lesen)</h3>
+      <div class="note">Nur Befehle, die für diesen Schlüssel getestet und bestätigt erlaubt sind. Jeder Wert wird erst beim Klick auf "Lesen" wirklich vom Auto abgefragt.</div>
+      <div id="ble_reads_list"></div>
+    </div>
+    <div class="card" id="ble_actions_card" style="display:none"><h3>Befehle (auslösen)</h3>
+      <div class="note">Sendet echte Befehle ans Auto.</div>
+      <div id="ble_actions_list"></div>
     </div>`;
   m.append(box);
   $("#blevinsave").onclick=async()=>{
@@ -509,71 +515,65 @@ async function viewBle(m){
     if(triesLeft<=0)return;
     let r;
     try{r=await jget("api/ble/status?name="+name);}catch(e){return;}
-    if(r.paired){$("#blemsg_"+id).textContent="✓ gekoppelt";showBleCapabilities(id,role);return;}
+    if(r.paired){$("#blemsg_"+id).textContent="✓ gekoppelt";loadBleCommands(id);return;}
     setTimeout(()=>pollBlePaired(id,name,triesLeft-1,delayMs,role),delayMs);
   }
-  function wireBleTest(id,name,role){
-    $("#bletest_"+id).onclick=async()=>{
-      $("#blemsg_"+id).textContent="teste…";
-      try{
-        const r=await jpost("api/ble/test",{name,role});
-        $("#blemsg_"+id).textContent=r.ok?"✓ "+(r.detail||"Test erfolgreich"):"✗ "+(r.error||"Test fehlgeschlagen");
-      }catch(e){
-        $("#blemsg_"+id).textContent="✗ Verbindungsfehler – bitte erneut versuchen";
-      }
-    };
-  }
-  function renderBleResults(out,data,countLabel){
-    let html="";
-    if(data.results&&data.results.length){
-      const okCount=data.results.filter(x=>x.ok).length;
-      html+=`<div class="note">${countLabel}: ${okCount}/${data.results.length} erlaubt</div>`;
-      html+=`<table class="probe"><tbody>${data.results.map(x=>
-        `<tr><td>${x.ok?"✓":"✗"}</td><td>${x.label}</td><td class="note">${x.detail||""}</td></tr>`
-      ).join("")}</tbody></table>`;
-    }
-    if(data.untested&&data.untested.length){
-      html+=`<div class="note" style="margin-top:10px">Nicht automatisch getestet:</div>`;
-      html+=`<table class="probe"><tbody>${data.untested.map(x=>
-        `<tr><td>⊘</td><td>${x.label}</td><td class="note">${x.reason||""}</td></tr>`
-      ).join("")}</tbody></table>`;
-    }
-    html+=`<div class="saverow"><button class="btn sm ghost" id="bleprobe_${out.id.replace('_results','').replace('bleprobe_','')}">Erneut mit echten Befehlen prüfen</button></div>`;
-    out.innerHTML=html;
-  }
-  async function showBleCapabilities(id,role){
-    const out=$("#bleprobe_"+id+"_results");
-    let data;try{data=await jpost("api/ble/capabilities",{role});}catch(e){return;}
-    renderBleResults(out,data,"Bekannt");
-    wireBleProbeButton(id,role);
-  }
-  function wireBleProbeButton(id,role){
-    const btn=$("#bleprobe_"+id);
-    if(!btn)return;
-    btn.onclick=async()=>{
-      const out=$("#bleprobe_"+id+"_results");
-      $("#blemsg_"+id).textContent="ermittle Befehle… (mehrere Sekunden, sendet echte Befehle ans Auto)";
-      try{
-        const r=await jpost("api/ble/probe",{name:id});
-        if(!r.ok){$("#blemsg_"+id).textContent="✗ "+(r.error||"Fehler");return;}
-        $("#blemsg_"+id).textContent="✓ Ermittlung abgeschlossen";
-        renderBleResults(out,r,"Echt getestet");
-        wireBleProbeButton(id,role);
-      }catch(e){
-        $("#blemsg_"+id).textContent="✗ Verbindungsfehler – bitte erneut versuchen";
-      }
-    };
+  async function loadBleCommands(id){
+    let cmds;try{cmds=await jget("api/ble/commands");}catch(e){return;}
+    const readsList=$("#ble_reads_list"),actionsList=$("#ble_actions_list");
+    readsList.innerHTML=cmds.reads.map(c=>`
+      <div class="ble-row">
+        <div>${c.label}</div>
+        <div class="saverow"><button class="btn sm ghost" id="bleread_${c.id}">Lesen</button><span class="note" id="blereadmsg_${c.id}"></span></div>
+        <div id="blereadvals_${c.id}" style="width:100%"></div>
+      </div>`).join("");
+    actionsList.innerHTML=cmds.actions.map(c=>`
+      <div class="ble-row">
+        <div>${c.label}</div>
+        <div class="saverow">
+          ${(c.id==="charging_set_limit"||c.id==="charging_set_amps")?`<input type="number" id="bleval_${c.id}" style="width:80px" placeholder="${c.id==='charging_set_limit'?'%':'A'}">`:""}
+          <button class="btn sm ghost" id="bleact_${c.id}">Ausführen</button>
+          <span class="note" id="bleactmsg_${c.id}"></span>
+        </div>
+      </div>`).join("");
+    cmds.reads.forEach(c=>{
+      $("#bleread_"+c.id).onclick=async()=>{
+        $("#blereadmsg_"+c.id).textContent="lese…";
+        $("#blereadvals_"+c.id).innerHTML="";
+        try{
+          const r=await jpost("api/ble/read",{name:id,id:c.id});
+          if(!r.ok){$("#blereadmsg_"+c.id).textContent="✗ "+(r.error||"Fehler");return;}
+          $("#blereadmsg_"+c.id).textContent="✓";
+          const entries=Object.entries(r.values||{});
+          $("#blereadvals_"+c.id).innerHTML=entries.length?`<table class="probe"><tbody>${entries.map(([k,v])=>
+            `<tr><td>${k}</td><td class="note">${v}</td></tr>`).join("")}</tbody></table>`:"";
+        }catch(e){$("#blereadmsg_"+c.id).textContent="✗ Verbindungsfehler";}
+      };
+    });
+    cmds.actions.forEach(c=>{
+      $("#bleact_"+c.id).onclick=async()=>{
+        $("#bleactmsg_"+c.id).textContent="sende…";
+        const body={name:id,id:c.id};
+        const valEl=$("#bleval_"+c.id);
+        if(valEl&&valEl.value)body.value=valEl.value;
+        try{
+          const r=await jpost("api/ble/exec",body);
+          $("#bleactmsg_"+c.id).textContent=r.ok?"✓ "+(r.detail||"OK"):"✗ "+(r.error||r.detail||"Fehler");
+        }catch(e){$("#bleactmsg_"+c.id).textContent="✗ Verbindungsfehler";}
+      };
+    });
+    $("#ble_reads_card").style.display="";
+    $("#ble_actions_card").style.display="";
   }
   wireBlePair("awake","awake","charging_manager");
-  wireBleTest("awake","awake","charging_manager");
-  async function refreshBleStatus(id,name,role){
+  async function refreshBleStatus(id,name){
     try{
       const r=await jget("api/ble/status?name="+name);
       $("#blemsg_"+id).textContent=r.paired?"✓ gekoppelt":"noch nicht gekoppelt";
-      if(r.paired)showBleCapabilities(id,role);
+      if(r.paired)loadBleCommands(id);
     }catch(e){}
   }
-  refreshBleStatus("awake","awake","charging_manager");
+  refreshBleStatus("awake","awake");
 }
 
 async function viewSettings(m){

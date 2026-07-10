@@ -377,6 +377,123 @@ def ble_probe_role(name):
             "untested": [{"label": l, "reason": r} for l, r in BLE_UNTESTED_COMMANDS]}
 
 
+# Individually invokable BLE reads/actions -- restricted to exactly the
+# commands confirmed working in BLE_KNOWN_RESULTS above. id -> (label, args).
+BLE_READS = {
+    "charge": ("Ladezustand", ["state", "charge"]),
+    "closures": ("Verriegelung/Türen", ["state", "closures"]),
+    "climate": ("Klimazustand", ["state", "climate"]),
+    "tire_pressure": ("Reifendruck", ["state", "tire-pressure"]),
+    "location": ("Standort", ["state", "location"]),
+    "drive": ("Fahrzustand", ["state", "drive"]),
+    "media": ("Medienstatus", ["state", "media"]),
+    "media_detail": ("Medien-Details", ["state", "media-detail"]),
+    "charge_schedule": ("Lade-Zeitplan", ["state", "charge-schedule"]),
+    "precondition_schedule": ("Vorklimatisierungs-Zeitplan", ["state", "precondition-schedule"]),
+    "software_update": ("Software-Update-Status", ["state", "software-update"]),
+    "parental_controls": ("Kindersicherung-Status", ["state", "parental-controls"]),
+    "body_controller": ("Basiszustand (VCSEC)", ["body-controller-state"]),
+    "list_keys": ("Alle Schlüssel", ["list-keys"]),
+    "ping": ("Erreichbarkeit", ["ping"]),
+}
+
+BLE_ACTIONS = {
+    "charge_port_open": ("Ladeport öffnen", ["charge-port-open"]),
+    "charge_port_close": ("Ladeport schließen", ["charge-port-close"]),
+    "charging_start": ("Laden starten", ["charging-start"]),
+    "charging_stop": ("Laden stoppen", ["charging-stop"]),
+    "charging_set_limit": ("Ladegrenze setzen", ["charging-set-limit", "80"]),
+    "charging_set_amps": ("Ladestrom setzen", ["charging-set-amps", "16"]),
+    "charging_schedule_cancel": ("Lade-Zeitplan abbrechen", ["charging-schedule-cancel"]),
+    "wake": ("Auto aufwecken", ["wake"]),
+    "honk": ("Hupen", ["honk"]),
+    "flash_lights": ("Lichter blinken", ["flash-lights"]),
+    "keep_accessory_power_on": ("Zubehör-Stromversorgung an", ["keep-accessory-power", "on"]),
+    "keep_accessory_power_off": ("Zubehör-Stromversorgung aus", ["keep-accessory-power", "off"]),
+}
+
+
+_allowed_count = sum(1 for ok in BLE_KNOWN_RESULTS["charging_manager"].values() if ok)
+assert len(BLE_READS) + len(BLE_ACTIONS) == _allowed_count, \
+    "BLE_READS/BLE_ACTIONS must cover exactly the commands confirmed allowed in BLE_KNOWN_RESULTS"
+
+
+def _ble_base(name):
+    vin = hubconf.getval("TESLA_BLE_VIN")
+    if not vin:
+        return None, {"ok": False, "error": "Fahrzeug-VIN erst eintragen und speichern"}
+    priv, _pub = _ble_keypath(name)
+    if not os.path.isfile(priv):
+        return None, {"ok": False, "error": "noch nicht gekoppelt"}
+    return [f"{BLE_BIN}/tesla-control", "-ble", "-vin", vin.upper(), "-key-file", priv], None
+
+
+def _flatten_state(raw_stdout):
+    """Tesla's `state CATEGORY` output is one top-level key wrapping a flat-ish
+    object; protobuf oneof fields serialize as {"EnumName": {}}. Flatten both
+    into plain scalars so they're usable as MQTT sensor values / UI rows
+    without hardcoding field names per category."""
+    try:
+        data = json.loads(raw_stdout)
+    except Exception:
+        return {}
+    if not isinstance(data, dict) or len(data) != 1:
+        return {}
+    inner = next(iter(data.values()))
+    if not isinstance(inner, dict):
+        return {}
+    out = {}
+    for k, v in inner.items():
+        if isinstance(v, (str, int, float, bool)):
+            out[k] = v
+        elif isinstance(v, dict) and len(v) == 1:
+            out[k] = next(iter(v.keys()))
+    return out
+
+
+def ble_read(name, read_id):
+    """Run exactly one confirmed-allowed read command and return parsed
+    values, for the "read now" UI and for MQTT sensor publishing."""
+    spec = BLE_READS.get(read_id)
+    if not spec:
+        return {"ok": False, "error": "unbekannter Lesebefehl"}
+    label, args = spec
+    base, err = _ble_base(name)
+    if err:
+        return err
+    r = subprocess.run(base + args, capture_output=True, text=True, timeout=30)
+    if r.returncode != 0:
+        return {"ok": False, "error": (r.stderr or r.stdout or "Fehler").strip()[:300]}
+    if read_id == "list_keys":
+        lines = [l for l in r.stdout.splitlines() if l.strip()]
+        return {"ok": True, "label": label, "values": {"anzahl_schluessel": len(lines)}}
+    if read_id == "ping":
+        return {"ok": True, "label": label, "values": {"erreichbar": True}}
+    return {"ok": True, "label": label, "values": _flatten_state(r.stdout)}
+
+
+def ble_exec(name, action_id, value=None):
+    """Run exactly one confirmed-allowed action command."""
+    spec = BLE_ACTIONS.get(action_id)
+    if not spec:
+        return {"ok": False, "error": "unbekannter Befehl"}
+    label, args = spec
+    base, err = _ble_base(name)
+    if err:
+        return err
+    final_args = list(args)
+    if action_id in ("charging_set_limit", "charging_set_amps") and value is not None:
+        try:
+            final_args[-1] = str(int(value))
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "ungültiger Wert"}
+    r = subprocess.run(base + final_args, capture_output=True, text=True, timeout=30)
+    ok = r.returncode == 0
+    lines = (r.stderr or r.stdout or "").strip().splitlines()
+    detail = lines[-1] if lines else ("OK" if ok else "Fehler")
+    return {"ok": ok, "label": label, "detail": detail[:200]}
+
+
 def ble_status_role(name):
     vin = hubconf.getval("TESLA_BLE_VIN")
     priv, _pub = _ble_keypath(name)

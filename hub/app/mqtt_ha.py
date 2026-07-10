@@ -13,6 +13,7 @@ so connect()/publish_state() here are non-blocking and safe to call from
 server.py's periodic loop.
 """
 import json, threading
+import diag
 
 try:
     import paho.mqtt.client as mqtt
@@ -44,10 +45,35 @@ SENSORS = {
 _lock = threading.Lock()
 _client = None
 _connected = False
+_command_handler = None  # fn(action_id: str, value: str|None) -> None
 
 
 def _topic(kind, oid):
     return f"{BASE}/{oid}/{kind}"
+
+
+def _ble_topic(kind, action_id):
+    return f"{BASE}/ble_{action_id}/{kind}"
+
+
+def set_command_handler(fn):
+    """Register the callback invoked when an HA button/number entity for a
+    BLE action is triggered: fn(action_id, value_or_None)."""
+    global _command_handler
+    _command_handler = fn
+
+
+def _on_message(client, userdata, msg):
+    if _command_handler is None:
+        return
+    try:
+        action_id = msg.topic.split("/")[1]
+        if action_id.startswith("ble_"):
+            action_id = action_id[len("ble_"):]
+        payload = msg.payload.decode("utf-8", "replace").strip()
+        _command_handler(action_id, payload or None)
+    except Exception as e:
+        print("[hub] mqtt command:", e, flush=True)
 
 
 def _on_connect(client, userdata, flags, rc, properties=None):
@@ -75,6 +101,43 @@ def _on_connect(client, userdata, flags, rc, properties=None):
             payload["payload_off"] = "OFF"
         client.publish(f"homeassistant/{component}/{DEVICE_ID}/{oid}/config",
                         json.dumps(payload), retain=True)
+
+    # BLE reads -> one sensor per category, full values as JSON attributes
+    # (avoids one HA entity per field; state is just a freshness marker).
+    for read_id, (label, _args) in diag.BLE_READS.items():
+        payload = {
+            "name": f"BLE {label}",
+            "unique_id": f"{DEVICE_ID}_ble_{read_id}",
+            "state_topic": _ble_topic("state", read_id),
+            "json_attributes_topic": _ble_topic("attributes", read_id),
+            "availability_topic": AVAIL_TOPIC,
+            "device": DEVICE_INFO,
+            "icon": "mdi:car-electric",
+        }
+        client.publish(f"homeassistant/sensor/{DEVICE_ID}/ble_{read_id}/config",
+                        json.dumps(payload), retain=True)
+
+    # BLE actions -> HA button (no value) or number (needs a value) entities.
+    for action_id, (label, args) in diag.BLE_ACTIONS.items():
+        needs_value = action_id in ("charging_set_limit", "charging_set_amps")
+        component = "number" if needs_value else "button"
+        payload = {
+            "name": f"BLE {label}",
+            "unique_id": f"{DEVICE_ID}_ble_{action_id}",
+            "command_topic": _ble_topic("set", action_id),
+            "availability_topic": AVAIL_TOPIC,
+            "device": DEVICE_INFO,
+            "icon": "mdi:car-connected",
+        }
+        if needs_value:
+            payload["state_topic"] = _ble_topic("state", action_id)
+            if action_id == "charging_set_limit":
+                payload.update({"min": 50, "max": 100, "step": 1, "unit_of_measurement": "%"})
+            else:
+                payload.update({"min": 5, "max": 32, "step": 1, "unit_of_measurement": "A"})
+        client.publish(f"homeassistant/{component}/{DEVICE_ID}/ble_{action_id}/config",
+                        json.dumps(payload), retain=True)
+        client.subscribe(_ble_topic("set", action_id))
 
 
 def _on_disconnect(client, userdata, rc, properties=None):
@@ -110,6 +173,7 @@ def ensure_connected(host, port, user, password):
             c.will_set(AVAIL_TOPIC, "offline", retain=True)
             c.on_connect = _on_connect
             c.on_disconnect = _on_disconnect
+            c.on_message = _on_message
             c.connect(host, int(port or 1883), keepalive=60)
             c.loop_start()
             _client = c
@@ -135,6 +199,29 @@ def publish_state(values: dict):
             _client.publish(_topic("state", oid), str(val))
         except Exception:
             pass
+
+
+def publish_ble_read(read_id, values: dict):
+    """Publish one BLE read result: a freshness-marker state (field count)
+    plus the full flattened values as JSON attributes."""
+    if _client is None or not _connected:
+        return
+    try:
+        _client.publish(_ble_topic("state", read_id), str(len(values)))
+        _client.publish(_ble_topic("attributes", read_id), json.dumps(values))
+    except Exception:
+        pass
+
+
+def publish_ble_action_state(action_id, value):
+    """Reflect the last commanded value for number-type BLE actions
+    (charging_set_limit/charging_set_amps) back to their HA state_topic."""
+    if _client is None or not _connected:
+        return
+    try:
+        _client.publish(_ble_topic("state", action_id), str(value))
+    except Exception:
+        pass
 
 
 def disconnect():

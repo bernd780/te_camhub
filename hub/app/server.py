@@ -156,6 +156,43 @@ def nas_sync_loop():
         time.sleep(600)
 
 
+def _ble_mqtt_command(action_id, value):
+    """Called from mqtt_ha's paho thread when an HA button/number entity for
+    a BLE action fires. Only ever the single supported key name 'awake' --
+    same one the Fahrzeug(BLE) UI uses."""
+    try:
+        r = diag.ble_exec("awake", action_id, value=value)
+        print(f"[hub] mqtt ble command {action_id}:", r, flush=True)
+        if r.get("ok") and value is not None:
+            mqtt_ha.publish_ble_action_state(action_id, value)
+    except Exception as e:
+        print("[hub] mqtt ble command error:", e, flush=True)
+
+
+mqtt_ha.set_command_handler(_ble_mqtt_command)
+
+
+def ble_mqtt_loop():
+    """Publish BLE sensor readings to Home Assistant every 15 minutes --
+    much less often than mqtt_loop's other sensors, since each read is a
+    real BLE round-trip to the vehicle, not a local getval() check. Only
+    runs anything if MQTT is enabled and the charging_manager key is
+    actually paired."""
+    while True:
+        time.sleep(900)
+        try:
+            if hubconf.getval("MQTT_ENABLED") != "true":
+                continue
+            if not diag.ble_status_role("awake").get("paired"):
+                continue
+            for read_id in diag.BLE_READS:
+                r = diag.ble_read("awake", read_id)
+                if r.get("ok"):
+                    mqtt_ha.publish_ble_read(read_id, r.get("values") or {})
+        except Exception as e:
+            print("[hub] ble mqtt:", e, flush=True)
+
+
 def mqtt_loop():
     """Publish Hub status to Home Assistant via MQTT Discovery every 30s.
     No-op (cheap getval() checks only) unless MQTT_ENABLED=true."""
@@ -491,6 +528,21 @@ class H(BaseHTTPRequestHandler):
                 return self._json(200, diag.ble_known_capabilities(body.get("role", "")))
             except Exception as e:
                 return self._json(200, {"ok": False, "error": str(e)[:300]})
+        if path == "/api/ble/commands":
+            return self._json(200, {
+                "reads": [{"id": i, "label": l} for i, (l, _a) in diag.BLE_READS.items()],
+                "actions": [{"id": i, "label": l} for i, (l, _a) in diag.BLE_ACTIONS.items()],
+            })
+        if path == "/api/ble/read":
+            try:
+                return self._json(200, diag.ble_read(body.get("name", ""), body.get("id", "")))
+            except Exception as e:
+                return self._json(200, {"ok": False, "error": str(e)[:300]})
+        if path == "/api/ble/exec":
+            try:
+                return self._json(200, diag.ble_exec(body.get("name", ""), body.get("id", ""), body.get("value")))
+            except Exception as e:
+                return self._json(200, {"ok": False, "error": str(e)[:300]})
         if path == "/api/nas/sync_status/refresh":
             threading.Thread(target=lambda: nassync.refresh_status(CFG["scan"]), daemon=True).start()
             return self._json(200, {"ok": True})
@@ -596,6 +648,7 @@ def main():
     threading.Thread(target=key_fetch_loop, daemon=True).start()
     threading.Thread(target=nas_sync_loop, daemon=True).start()
     threading.Thread(target=mqtt_loop, daemon=True).start()
+    threading.Thread(target=ble_mqtt_loop, daemon=True).start()
     if a.redirect80:
         threading.Thread(target=_redirect80, daemon=True).start()
     httpd = ThreadingHTTPServer(("0.0.0.0", a.port), H)
