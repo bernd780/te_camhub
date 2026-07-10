@@ -361,13 +361,23 @@ def ble_exec(name, action_id, value=None):
 
 
 def ble_status_role(name):
+    """session-info has been observed to report a false negative
+    (paired=False) in situations where a plain read succeeds moments
+    later against the same key -- it's a stricter/different probe than an
+    actual command needs, apparently sensitive to momentary BLE flakiness.
+    One retry before giving up avoids that intermittent false negative
+    from hiding the whole BLE UI/blocking the MQTT loop."""
     vin = hubconf.getval("TESLA_BLE_VIN")
     priv, _pub = _ble_keypath(name)
     if not vin or not os.path.isfile(priv) or not ble_binaries_installed():
         return {"paired": False}
-    r = _tc_run([f"{BLE_BIN}/tesla-control", "-ble", "-vin", vin.upper(),
-                 "session-info", priv, "infotainment"], timeout=20)
-    return {"paired": r.returncode == 0}
+    args = [f"{BLE_BIN}/tesla-control", "-ble", "-vin", vin.upper(),
+            "session-info", priv, "infotainment"]
+    for attempt in range(2):
+        r = _tc_run(args, timeout=20)
+        if r.returncode == 0:
+            return {"paired": True}
+    return {"paired": False}
 
 def apply_ap_fallback(enabled, ssid=None, password=None, ap_ip=None):
     """Toggle 'AP only as fallback when home WiFi is unavailable' mode.

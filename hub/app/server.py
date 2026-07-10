@@ -175,23 +175,26 @@ mqtt_ha.set_command_handler(_ble_mqtt_command)
 def ble_mqtt_loop():
     """Publish BLE sensor readings to Home Assistant every 15 minutes --
     much less often than mqtt_loop's other sensors, since each read is a
-    real BLE round-trip to the vehicle, not a local getval() check. Only
-    runs anything if MQTT is enabled and the charging_manager key is
-    actually paired."""
+    real BLE round-trip to the vehicle, not a local getval() check.
+
+    Deliberately does NOT gate on ble_status_role()'s session-info check
+    first (unlike the Hub UI's "gekoppelt?" indicator): that check has been
+    observed to report paired=False even while plain reads (ping, state
+    charge, ...) succeed seconds later against the same key -- it's a
+    stricter/different probe than an actual read needs. Each read's own
+    success/failure is what decides whether it gets published."""
+    time.sleep(35)  # let mqtt_loop's own connect-and-discover cycle land first
     while True:
-        time.sleep(900)
         try:
-            if hubconf.getval("MQTT_ENABLED") != "true":
-                continue
-            if not diag.ble_status_role("awake").get("paired"):
-                continue
-            reads, _actions = diag.ble_available_commands()
-            for read_id in reads:
-                r = diag.ble_read("awake", read_id)
-                if r.get("ok"):
-                    mqtt_ha.publish_ble_read(read_id, r.get("values") or {})
+            if hubconf.getval("MQTT_ENABLED") == "true":
+                reads, _actions = diag.ble_available_commands()
+                for read_id in reads:
+                    r = diag.ble_read("awake", read_id)
+                    if r.get("ok"):
+                        mqtt_ha.publish_ble_read(read_id, r.get("values") or {})
         except Exception as e:
             print("[hub] ble mqtt:", e, flush=True)
+        time.sleep(900)
 
 
 def mqtt_loop():
@@ -448,6 +451,7 @@ class H(BaseHTTPRequestHandler):
             if body.get("confirm") != "ZURUECKSETZEN":
                 return self._json(200, {"ok": False, "error": "Bestätigung fehlt"})
             VAULT.factory_reset()
+            hubconf.clear_secrets()
             _drop_sessions(); VIEWER.clear_cache(); VIEWER.invalidate()
             return self._json(200, {"ok": True})
         if path == "/api/login":
