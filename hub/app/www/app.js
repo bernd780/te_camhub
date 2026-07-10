@@ -77,6 +77,7 @@ function render(view){
   if(view==="files")return viewFiles(m,"");
   if(view==="diag")return viewDiag(m);
   if(view==="ble")return viewBle(m);
+  if(view==="trips")return viewTrips(m);
   if(view==="settings")return viewSettings(m);
 }
 
@@ -634,6 +635,67 @@ async function viewBle(m){
   refreshBleStatus("awake","awake");
 }
 
+/* ---------------- Fahrten & Log ---------------- */
+const TRIP_EVENT_ICONS={wifi:"📶",usb:"🔌",temp:"🌡️",trip:"🚗",ble:"🔵"};
+async function viewTrips(m){
+  m.append(el("h2","title","Fahrten & Log"));
+  const box=el("div");box.innerHTML=`
+    <div class="card"><h3>Blackbox-Modus</h3>
+      <div class="note">Zeichnet automatisch Position/Route auf, sobald eine Fahrt erkannt wird (Schaltstellung ≠ Parken), und beendet die Aufzeichnung, wenn wieder geparkt wird. Braucht einen gekoppelten BLE-Schlüssel. Ein-/Ausschalten unter Einstellungen.</div>
+      <div class="saverow"><span class="note" id="trip_active_status">lädt…</span></div>
+    </div>
+    <div class="card"><h3>Fahrten (GPX-Export)</h3>
+      <div id="trips_list" class="note">lädt…</div>
+    </div>
+    <div class="card"><h3>Ereignis-Log</h3>
+      <div class="note">Wichtige Ereignisse. Mit gekoppeltem BLE detaillierter (Fahrt-Start/-Ende, Verriegelung, Ladezustand), ohne BLE nur WLAN-/USB-Verbindungswechsel und Temperatur-Warnungen.</div>
+      <div id="events_list" class="note">lädt…</div>
+    </div>
+    <div class="card"><h3>Temperatur</h3>
+      <div class="note">Pi-Temperatur, jede Minute aufgezeichnet.</div>
+      <div id="temp_list" class="note">lädt…</div>
+    </div>`;
+  m.append(box);
+
+  try{
+    const tr=await jget("api/blackbox/trips");
+    $("#trip_active_status").textContent=tr.active?"🔴 Fahrt wird gerade aufgezeichnet":"⚪ Keine aktive Fahrt";
+    const list=$("#trips_list");
+    if(!tr.trips||!tr.trips.length){list.textContent="Noch keine aufgezeichneten Fahrten.";}
+    else{
+      list.innerHTML=`<table class="probe"><tbody>${tr.trips.map(t=>`
+        <tr>
+          <td>${(t.start||"").replace("T"," ").slice(0,16)}</td>
+          <td class="note">${t.distance_km!=null?t.distance_km+" km":"–"} · ${t.points} Punkte</td>
+          <td><a href="api/blackbox/export?trip=${encodeURIComponent(t.trip_id)}" class="btn sm ghost" download>GPX</a></td>
+        </tr>`).join("")}</tbody></table>`;
+    }
+  }catch(e){$("#trips_list").textContent="✗ Fehler beim Laden";}
+
+  try{
+    const ev=await jget("api/events?limit=100");
+    const list=$("#events_list");
+    if(!ev.events||!ev.events.length){list.textContent="Noch keine Ereignisse.";}
+    else{
+      list.innerHTML=`<table class="probe"><tbody>${ev.events.map(e=>`
+        <tr><td>${(TRIP_EVENT_ICONS[e.category]||"•")}</td>
+        <td class="note">${(e.ts||"").replace("T"," ")}</td>
+        <td>${e.message}</td></tr>`).join("")}</tbody></table>`;
+    }
+  }catch(e){$("#events_list").textContent="✗ Fehler beim Laden";}
+
+  try{
+    const t=await jget("api/temperature?limit=30");
+    const list=$("#temp_list");
+    if(!t.points||!t.points.length){list.textContent="Noch keine Messwerte.";}
+    else{
+      const pts=[...t.points].reverse();
+      list.innerHTML=`<table class="probe"><tbody>${pts.map(p=>
+        `<tr><td>${(p.ts||"").replace("T"," ")}</td><td>${p.temp.toFixed(1)}°C</td></tr>`).join("")}</tbody></table>`;
+    }
+  }catch(e){$("#temp_list").textContent="✗ Fehler beim Laden";}
+}
+
 async function viewSettings(m){
   m.append(el("h2","title","Einstellungen"));
   let c;try{c=await jget("api/settings");}catch(e){return;}
@@ -671,6 +733,10 @@ async function viewSettings(m){
       ${fld("Tessie API-Token","s_tessie_api_token","password","",c.tessie_api_token_set?"•••• gesetzt":"")}
       ${fld("BLE Fahrzeug-VIN","s_tesla_ble_vin","text",c.tesla_ble_vin)}
       <div class="note">BLE-Schlüssel koppeln, testen und den Kopplungsstatus einsehen: Menüpunkt <b>„Fahrzeug (BLE)“</b> links.</div>
+    </div>
+    <div class="card"><h3>Blackbox-Modus</h3>
+      ${chk("Fahrten automatisch aufzeichnen (Position, Route, Ereignisse)","s_blackbox_enabled",c.blackbox_enabled==='true')}
+      <div class="note">Startet automatisch bei erkannter Fahrt (braucht gekoppelten BLE-Schlüssel), zeichnet währenddessen alle 10 Sekunden Position auf und beendet sich beim Parken. Fahrten mit GPX-Export unter <b>„Fahrten &amp; Log“</b> links.</div>
     </div>
     <div class="card"><h3>Benachrichtigungen</h3>
       ${chk("Pushover aktiv","s_pushover_enabled",c.pushover_enabled==='true')}
@@ -802,7 +868,7 @@ async function viewSettings(m){
     const secrets=["share_password","wifipass","ap_pass","teslafi_api_token","tessie_api_token",
       "pushover_user_key","pushover_app_key","telegram_bot_token","mqtt_password"];
     const bools=["archive_recentclips","archive_savedclips","archive_sentryclips","sync_all_content",
-      "ssh_disable_password","pushover_enabled","telegram_enabled","ap_fallback_only","mqtt_enabled","nas_raw_keys"];
+      "ssh_disable_password","pushover_enabled","telegram_enabled","ap_fallback_only","mqtt_enabled","nas_raw_keys","blackbox_enabled"];
     const body={};
     fields.forEach(f=>body[f]=($("#s_"+f)||{}).value||"");
     secrets.forEach(f=>{const v=($("#s_"+f)||{}).value;if(v)body[f]=v;});

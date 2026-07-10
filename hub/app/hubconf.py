@@ -54,6 +54,7 @@ FIELD_MAP = {
     "sync_all_content": "SYNC_ALL_CONTENT",
     "sync_media_path": "SYNC_MEDIA_PATH",
     "nas_raw_keys": "NAS_RAW_KEYS",
+    "blackbox_enabled": "BLACKBOX_ENABLED",
     "retention_mode": "RETENTION_MODE",
     "retention_days": "RETENTION_DAYS",
     "retention_free_gb": "RETENTION_FREE_GB",
@@ -63,7 +64,7 @@ FIELD_MAP = {
 }
 BOOLS = {"archive_recentclips", "archive_savedclips", "archive_sentryclips",
          "archive_trackmodeclips", "pushover_enabled", "telegram_enabled", "ap_fallback_only",
-         "sync_all_content", "ssh_disable_password", "mqtt_enabled", "nas_raw_keys"}
+         "sync_all_content", "ssh_disable_password", "mqtt_enabled", "nas_raw_keys", "blackbox_enabled"}
 INTS = {"snapshot_interval", "archive_delay", "retention_days",
         "retention_free_gb", "vault_autolock_min", "mqtt_port"}
 SECRETS = {"share_password", "wifipass", "ap_pass", "teslafi_api_token",

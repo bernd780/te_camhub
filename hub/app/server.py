@@ -18,7 +18,7 @@ from urllib.parse import urlparse, parse_qs
 from vault import Vault, VaultError
 from viewer import Viewer
 from tesla_auth import TeslaAuth
-import tesla_api, keybridge, hubconf, files as filemod, diag, nassync, mqtt_ha
+import tesla_api, keybridge, hubconf, files as filemod, diag, nassync, mqtt_ha, eventlog, blackbox
 
 WWW = os.path.join(os.path.dirname(os.path.abspath(__file__)), "www")
 
@@ -225,6 +225,150 @@ def mqtt_loop():
         time.sleep(30)
 
 
+def temp_log_loop():
+    """Write the Pi's temperature to temperature.log once a minute, and log
+    a discrete event (not just the routine per-minute line) whenever it
+    crosses a hot/cold-again threshold, so the event log stays readable."""
+    was_hot = False
+    while True:
+        try:
+            st = diag.status()
+            raw = (st.get("temp") or "").replace("'C", "").strip()
+            if raw:
+                temp = float(raw)
+                eventlog.log_temperature(temp)
+                if temp >= 75 and not was_hot:
+                    eventlog.log_event("temp", f"Pi-Temperatur hoch: {temp:.1f}°C", temp=temp)
+                    was_hot = True
+                elif temp < 70 and was_hot:
+                    eventlog.log_event("temp", f"Pi-Temperatur wieder normal: {temp:.1f}°C", temp=temp)
+                    was_hot = False
+        except Exception as e:
+            print("[hub] temp log:", e, flush=True)
+        time.sleep(60)
+
+
+def connectivity_log_loop():
+    """Always-on, BLE-independent event log: WiFi/USB connectivity
+    transitions. This is the "ohne BLE weniger" baseline -- coarse but
+    needs nothing beyond what diag.status() already reads locally."""
+    last_wifi = None
+    last_usb = None
+    while True:
+        try:
+            st = diag.status()
+            wifi = st.get("wifi_ssid") or None
+            if wifi != last_wifi:
+                if wifi:
+                    eventlog.log_event("wifi", f"WLAN verbunden: {wifi}")
+                elif last_wifi is not None:
+                    eventlog.log_event("wifi", f"WLAN getrennt (war: {last_wifi})")
+                last_wifi = wifi
+            usb = bool(st.get("gadget_active"))
+            if last_usb is not None and usb != last_usb:
+                eventlog.log_event("usb", "USB-Gadget verbunden" if usb else "USB-Gadget getrennt")
+            last_usb = usb
+        except Exception as e:
+            print("[hub] connectivity log:", e, flush=True)
+        time.sleep(20)
+
+
+# Trip detection/blackbox state, owned by trip_watch_loop only.
+_trip = {"active": False, "trip_id": None, "start_ts": None, "start_odometer": None,
+         "locked": None, "asleep": None, "charging": None}
+
+
+def _trip_tick_idle():
+    """Out-of-trip cadence: cheap-ish drive-state poll to notice departure."""
+    r = diag.ble_read("awake", "drive")
+    if not r.get("ok"):
+        return
+    shift = (r.get("values") or {}).get("driveState.shiftState")
+    if shift and shift not in ("Park", "Invalid"):
+        _start_trip()
+
+
+def _start_trip():
+    ts = time.strftime("%Y-%m-%dT%H-%M-%S")
+    trip_id = blackbox.start_trip(ts)
+    _trip.update(active=True, trip_id=trip_id, start_ts=ts,
+                  start_odometer=None, locked=None, asleep=None, charging=None)
+    eventlog.log_event("trip", "Fahrt gestartet")
+
+
+def _end_trip():
+    summary = blackbox.trip_summary(_trip["trip_id"]) if _trip["trip_id"] else {}
+    dist = summary.get("distance_km")
+    msg = "Fahrt beendet"
+    if dist is not None:
+        msg += f" ({dist:.1f} km)"
+    eventlog.log_event("trip", msg, **{k: v for k, v in summary.items() if k != "trip_id"})
+    _trip.update(active=False, trip_id=None, start_ts=None,
+                  start_odometer=None, locked=None, asleep=None, charging=None)
+
+
+def _trip_tick_active():
+    """In-trip cadence (every 10s): one location+drive read for the
+    blackbox point, occasional (~every 3rd tick) closures/body_controller/
+    charge reads for richer sub-events -- avoids hammering BLE with every
+    category every 10s while still catching lock/sleep/charging changes
+    during the drive."""
+    drive = diag.ble_read("awake", "drive")
+    loc = diag.ble_read("awake", "location")
+    if not drive.get("ok") or not loc.get("ok"):
+        return
+    dv, lv = drive.get("values") or {}, loc.get("values") or {}
+    shift = dv.get("driveState.shiftState")
+    odometer = dv.get("driveState.odometerInHundredthsOfAMile")
+    odometer_mi = (odometer / 100.0) if isinstance(odometer, (int, float)) else None
+    lat, lon = lv.get("latitude"), lv.get("longitude")
+    if lat is not None and lon is not None:
+        blackbox.append_point(_trip["trip_id"], time.strftime("%Y-%m-%dT%H:%M:%S"),
+                               lat, lon, heading=lv.get("heading"),
+                               odometer_mi=odometer_mi, shift_state=shift)
+    if shift == "Park":
+        _end_trip()
+        return
+
+    global _trip_subcheck_counter
+    _trip_subcheck_counter = (_trip_subcheck_counter + 1) % 3
+    if _trip_subcheck_counter != 0:
+        return
+    cl = diag.ble_read("awake", "closures")
+    if cl.get("ok"):
+        locked = (cl.get("values") or {}).get("locked")
+        if _trip["locked"] is not None and locked != _trip["locked"]:
+            eventlog.log_event("trip", "Verriegelt" if locked else "Entriegelt", während_fahrt=True)
+        _trip["locked"] = locked
+    ch = diag.ble_read("awake", "charge")
+    if ch.get("ok"):
+        charging = (ch.get("values") or {}).get("chargingState")
+        if _trip["charging"] is not None and charging != _trip["charging"] and charging:
+            eventlog.log_event("trip", f"Ladezustand: {charging}", während_fahrt=True)
+        _trip["charging"] = charging
+
+
+_trip_subcheck_counter = 0
+
+
+def trip_watch_loop():
+    """Automatic trip detection + blackbox recording, gated behind
+    BLACKBOX_ENABLED. Idle cadence 30s (just watching for departure),
+    active cadence 10s (recording the actual trip) -- matches the
+    explicitly requested "10s while driving, don't hammer BLE while
+    parked" trade-off."""
+    while True:
+        try:
+            if hubconf.getval("BLACKBOX_ENABLED") == "true":
+                if _trip["active"]:
+                    _trip_tick_active()
+                else:
+                    _trip_tick_idle()
+        except Exception as e:
+            print("[hub] trip watch:", e, flush=True)
+        time.sleep(10 if _trip["active"] else 30)
+
+
 def _bulk_worker():
     def progress(done, total, _cid):
         with _bulk_guard:
@@ -425,6 +569,29 @@ class H(BaseHTTPRequestHandler):
                 "reads": [{"id": i, "label": l} for i, (l, _a) in reads.items()],
                 "actions": [{"id": i, "label": l} for i, (l, _a) in actions.items()],
             })
+        if path == "/api/events":
+            try:
+                limit = int(self._qs("limit") or "200")
+            except ValueError:
+                limit = 200
+            return self._json(200, {"events": eventlog.read_events(limit)})
+        if path == "/api/temperature":
+            try:
+                limit = int(self._qs("limit") or "1440")
+            except ValueError:
+                limit = 1440
+            return self._json(200, {"points": eventlog.read_temperature(limit)})
+        if path == "/api/blackbox/trips":
+            return self._json(200, {"trips": blackbox.list_trips(),
+                                     "active": _trip["active"]})
+        if path == "/api/blackbox/export":
+            trip_id = self._qs("trip") or ""
+            if not trip_id or "/" in trip_id or "\\" in trip_id:
+                return self._json(404, {"error": "not found"})
+            gpx = blackbox.to_gpx(trip_id)
+            body = gpx.encode("utf-8")
+            return self._raw(200, body, "application/gpx+xml",
+                              {"Content-Disposition": f'attachment; filename="{trip_id}.gpx"'})
         return self._json(404, {"error": "not found"})
 
     def do_POST(self):
@@ -645,11 +812,16 @@ def main():
     VAULT = Vault(a.state)
     AUTH = TeslaAuth(VAULT)
     VIEWER = Viewer(a.scan, a.out, VAULT)
+    eventlog.init(a.state)
+    blackbox.init(a.state)
     threading.Thread(target=autolock_loop, daemon=True).start()
     threading.Thread(target=key_fetch_loop, daemon=True).start()
     threading.Thread(target=nas_sync_loop, daemon=True).start()
     threading.Thread(target=mqtt_loop, daemon=True).start()
     threading.Thread(target=ble_mqtt_loop, daemon=True).start()
+    threading.Thread(target=temp_log_loop, daemon=True).start()
+    threading.Thread(target=connectivity_log_loop, daemon=True).start()
+    threading.Thread(target=trip_watch_loop, daemon=True).start()
     if a.redirect80:
         threading.Thread(target=_redirect80, daemon=True).start()
     httpd = ThreadingHTTPServer(("0.0.0.0", a.port), H)
