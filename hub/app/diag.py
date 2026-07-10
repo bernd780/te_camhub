@@ -3,7 +3,7 @@ Diagnostics/actions for the Hub: system status, log tails, reboot, drive toggle,
 sync/retention/BLE triggers. Thin wrappers over the existing teslausb scripts and
 standard tools (the Hub runs as root via systemd).
 """
-import os, subprocess, urllib.request, tarfile, io
+import os, subprocess, urllib.request, tarfile, io, json, time
 import hubconf
 
 def _run(cmd, timeout=10):
@@ -161,6 +161,48 @@ def ble_pair_role(name, role):
     if r.returncode != 0:
         return {"ok": False, "error": (r.stderr or r.stdout or "Kopplungsanfrage fehlgeschlagen").strip()[:300]}
     return {"ok": True}
+
+
+def ble_test_role(name, role):
+    """Actually exercise a paired key against the real vehicle instead of
+    just checking session-info, so pairing success is unambiguous:
+    - charging_manager: opens then closes the charge port (visible/audible
+      at the car -- also the real-world test of whether this role can wake
+      a sleeping vehicle).
+    - everything else (vehicle_monitor etc.): reads closures state
+      (locked, doors, sentry mode) over BLE, which works even while the
+      infotainment system is asleep."""
+    vin = hubconf.getval("TESLA_BLE_VIN")
+    if not vin:
+        return {"ok": False, "error": "Fahrzeug-VIN erst eintragen und speichern"}
+    priv, _pub = _ble_keypath(name)
+    if not os.path.isfile(priv):
+        return {"ok": False, "error": "noch nicht gekoppelt"}
+    base = [f"{BLE_BIN}/tesla-control", "-ble", "-vin", vin.upper(), "-key-file", priv]
+
+    if role == "charging_manager":
+        r1 = subprocess.run(base + ["charge-port-open"], capture_output=True, text=True, timeout=30)
+        if r1.returncode != 0:
+            return {"ok": False, "error": (r1.stderr or r1.stdout or "Ladeport öffnen fehlgeschlagen").strip()[:300]}
+        time.sleep(4)
+        r2 = subprocess.run(base + ["charge-port-close"], capture_output=True, text=True, timeout=30)
+        if r2.returncode != 0:
+            return {"ok": True, "detail": "Ladeport wurde geöffnet, Schließen aber fehlgeschlagen: "
+                                           + (r2.stderr or r2.stdout or "Fehler").strip()[:200]}
+        return {"ok": True, "detail": "Ladeport wurde geöffnet und wieder geschlossen -- am Auto sichtbar/hörbar gewesen?"}
+
+    r = subprocess.run(base + ["state", "closures"], capture_output=True, text=True, timeout=30)
+    if r.returncode != 0:
+        return {"ok": False, "error": (r.stderr or r.stdout or "Abfrage fehlgeschlagen").strip()[:300]}
+    try:
+        data = json.loads(r.stdout).get("closuresState", {})
+        locked = data.get("locked")
+        sentry = next(iter((data.get("sentryModeState") or {}).keys()), "?")
+        ts = data.get("timestamp", "")
+        detail = f"Fahrzeug hat geantwortet -- verriegelt: {'ja' if locked else 'nein'}, Sentry: {sentry}, Stand: {ts}"
+    except Exception:
+        detail = (r.stdout or "").strip()[:300]
+    return {"ok": True, "detail": detail}
 
 
 def ble_status_role(name):

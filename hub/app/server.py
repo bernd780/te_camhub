@@ -476,6 +476,11 @@ class H(BaseHTTPRequestHandler):
                 return self._json(200, diag.ble_pair_role(body.get("name", ""), body.get("role", "")))
             except Exception as e:
                 return self._json(200, {"ok": False, "error": str(e)[:300]})
+        if path == "/api/ble/test":
+            try:
+                return self._json(200, diag.ble_test_role(body.get("name", ""), body.get("role", "")))
+            except Exception as e:
+                return self._json(200, {"ok": False, "error": str(e)[:300]})
         if path == "/api/nas/sync_status/refresh":
             threading.Thread(target=lambda: nassync.refresh_status(CFG["scan"]), daemon=True).start()
             return self._json(200, {"ok": True})
