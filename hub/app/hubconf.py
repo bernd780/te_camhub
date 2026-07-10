@@ -153,6 +153,26 @@ def write_settings(values: dict):
     return True, None
 
 
+def clear_secrets():
+    """Forgot-password recovery: remove every SECRETS field's line from the
+    conf file (NAS/WiFi/AP passwords, API tokens, bot/MQTT credentials).
+    Called alongside Vault.factory_reset() -- a stick pulled after reset must
+    not still hand out these credentials in clear text."""
+    subprocess.run(["mount", "/", "-o", "remount,rw"], capture_output=True)
+    try:
+        with open(CONF, encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
+        secret_vars = {FIELD_MAP[field] for field in SECRETS}
+        lines = [l for l in lines
+                 if not any(l.startswith("export " + var + "=") for var in secret_vars)]
+        tmp = CONF + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.writelines(lines)
+        os.replace(tmp, CONF)
+    finally:
+        subprocess.run(["mount", "/", "-o", "remount,ro"], capture_output=True)
+
+
 def test_nas(server=None, share=None, user=None, password=None):
     """Try a temporary CIFS mount; empty args fall back to stored conf."""
     server = server or getval("ARCHIVE_SERVER")
