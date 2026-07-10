@@ -48,6 +48,46 @@ Dieses Projekt baut auf der Arbeit anderer auf:
 - **[MikeBishop/tesla-vehicle-command-arm-binaries](https://github.com/MikeBishop/tesla-vehicle-command-arm-binaries)** —
   vorgebaute ARM-Binaries der obigen Tools für den Raspberry Pi.
 
+## BLE-Fahrzeugzugriff: was die Rolle `charging_manager` wirklich darf
+
+Der Hub koppelt bewusst nur einen einzelnen, eingeschränkten BLE-Schlüssel mit der
+Tesla-Rolle `charging_manager` (nicht `owner`/`driver` mit Vollzugriff, siehe
+[Danksagungen](#danksagungen--quellen) → esphome-tesla-ble). Tesla dokumentiert Rollen nur
+grob (["kann Befehle autorisieren, die das Laden betreffen"](https://github.com/teslamotors/vehicle-command/blob/main/pkg/protocol/protocol.md#roles)) —
+was das konkret bedeutet, wurde deshalb am 2026-07-10 **empirisch gegen ein echtes
+Fahrzeug** getestet (`tesla-control` über BLE, Ergebnis fest hinterlegt in
+[`hub/app/diag.py`](hub/app/diag.py), `BLE_KNOWN_RESULTS`). Die Hub-Oberfläche zeigt diese
+Liste im Menü **Fahrzeug (BLE)** an, sobald ein Schlüssel gekoppelt ist.
+
+**Erlaubt (vom Fahrzeug bestätigt):**
+
+- **Lesen — uneingeschränkt, alle Kategorien:** Ladezustand, Verriegelung/Türen, Klima,
+  Reifendruck, Standort, Fahrzustand, Medien(-Details), Lade-/Vorklimatisierungs-Zeitplan,
+  Software-Update-Status, Kindersicherung, VCSEC-Basiszustand (funktioniert auch bei
+  schlafendem Fahrzeug), alle eingetragenen Schlüssel auflisten, Ping.
+- **Steuern:** Ladeport öffnen/schließen, Laden starten/stoppen, Ladegrenze/-strom setzen,
+  Lade-Zeitplan abbrechen, Fahrzeug aufwecken, Hupen, Lichter blinken lassen,
+  Zubehör-Stromversorgung an/aus.
+
+**Abgelehnt** (vom Fahrzeug selbst mit `INSUFFICIENT_PRIVILEGES` bzw.
+`GENERICERROR_UNAUTHORIZED` zurückgewiesen, nicht nur client-seitig verweigert):
+alle Medien-Steuerbefehle (Lautstärke, Titel, Play/Pause, Favoriten), Ver-/Entriegeln,
+Fenster, Klima ein/aus, Sentry-Modus, Tonneau, Lenkradheizung.
+
+**Bewusst nie automatisch getestet** (Befehl existiert technisch, aber ein unerwarteter
+Erfolg wäre riskanter als die Erkenntnis wert): Fernstart (`drive`, Risiko einer
+Fahrzeugbewegung), Schlüssel hinzufügen/entfernen/umbenennen (Risiko, eigenen Zugriff zu
+verlieren), Software-Update starten/abbrechen, Gastdaten löschen, Frunk öffnen (kein
+Schließbefehl vorhanden), Kofferraum (Schließen nicht auf allen Modellen verfügbar),
+Sitzheizung/Zieltemperatur (brauchen Parameter, die sich nicht sicher wählen lassen),
+Valet-/Gast-Modus, Kindersicherung setzen, Niedrig-Energie-Modus, komplexe Zeitpläne
+hinzufügen/entfernen. Volle Liste mit Begründung: `BLE_UNTESTED_COMMANDS` in
+[`hub/app/diag.py`](hub/app/diag.py).
+
+**Sicherheitshinweis:** Der private Schlüssel liegt unverschlüsselt auf dem Stick
+(`/root/.ble/<name>/key_private.pem`). Bei Verlust/Diebstahl des Sticks: BLE-Schlüssel
+sofort in der Tesla-App entfernen, PIN-to-Drive im Fahrzeug aktivieren.
+
 ## Ursprüngliches teslausb
 
 Alles unterhalb dieser Zeile ist die ursprüngliche teslausb-Dokumentation und betrifft den
