@@ -342,17 +342,40 @@ function intersect {
   mv /tmp/prune_tmp.$$ "$1"
 }
 
+function sdcard_freespace_low () {
+  # Cheap check (no mount needed) of free space on the SD card itself,
+  # mirroring freespacemanager's own reserve calculation: 10G + 3% of the
+  # cam disk's nominal size. Used to decide whether cleanup can wait for
+  # the normal once-a-day cadence or needs to happen sooner.
+  local reserve=10737418240
+  local threepctoftotalspace
+  threepctoftotalspace=$(eval "$(stat --file-system --format="echo \$((%b*%S/33))" /backingfiles/cam_disk.bin)")
+  reserve=$((reserve + threepctoftotalspace))
+  local freespace
+  freespace=$(eval "$(stat --file-system --format="echo \$((%f*%S))" /backingfiles/cam_disk.bin)")
+  [ "$freespace" -lt "$reserve" ]
+}
+
 function clean_cam_mount {
 
   local mode="${1:-}"
 
   if [ "$mode" = "freespace" ]
   then
+    # Normally only actually clean up once a day -- but if the SD card is
+    # running low on space, fall back to the tighter interval so cleanup
+    # can keep up until there's room again.
+    local interval="${CAM_CLEAN_INTERVAL:-86400}"
+    if sdcard_freespace_low
+    then
+      interval=300
+      log "SD card space low, using shorter cleanup interval"
+    fi
     if [ -e /tmp/last_clean_time ]
     then
       read -r -d . last < /tmp/last_clean_time
       read -r -d . now < /proc/uptime
-      if (( (now - last) < 300 ))
+      if (( (now - last) < interval ))
       then
         log "skipping cleaning cam mount"
         return
