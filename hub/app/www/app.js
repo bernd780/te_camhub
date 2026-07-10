@@ -586,11 +586,20 @@ async function viewSettings(m){
       $("#blemsg_"+id).textContent="koppele…";
       try{
         const r=await jpost("api/ble/pair",{name,role});
-        $("#blemsg_"+id).textContent=r.ok?"Anfrage gesendet – jetzt am Auto Schlüsselkarte an die Konsole halten und am Bildschirm bestätigen":"✗ "+(r.error||"Fehler");
+        if(!r.ok){$("#blemsg_"+id).textContent="✗ "+(r.error||"Fehler");return;}
+        $("#blemsg_"+id).textContent="Anfrage gesendet – jetzt am Auto Schlüsselkarte an die Konsole halten und am Bildschirm bestätigen";
+        pollBlePaired(id,name,40,3000);
       }catch(e){
         $("#blemsg_"+id).textContent="✗ Verbindungsfehler – bitte erneut versuchen";
       }
     };
+  }
+  async function pollBlePaired(id,name,triesLeft,delayMs){
+    if(triesLeft<=0)return;
+    let r;
+    try{r=await jget("api/ble/status?name="+name);}catch(e){return;}
+    if(r.paired){$("#blemsg_"+id).textContent="✓ gekoppelt";return;}
+    setTimeout(()=>pollBlePaired(id,name,triesLeft-1,delayMs),delayMs);
   }
   wireBlePair("awake","awake","charging_manager");
   wireBlePair("monitor","monitor","vehicle_monitor");
