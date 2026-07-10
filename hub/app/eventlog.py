@@ -37,6 +37,10 @@ def _path(name):
     return os.path.join(_state_dir, name)
 
 
+def temperature_log_path():
+    return _path("temperature.log")
+
+
 def _append(path, line):
     with _lock:
         try:

@@ -581,6 +581,12 @@ class H(BaseHTTPRequestHandler):
             except ValueError:
                 limit = 1440
             return self._json(200, {"points": eventlog.read_temperature(limit)})
+        if path == "/api/temperature/download":
+            p = eventlog.temperature_log_path()
+            if not os.path.isfile(p):
+                return self._json(404, {"error": "not found"})
+            return self._sendfile(p, "text/csv",
+                                   {"Content-Disposition": 'attachment; filename="temperature.log"'})
         if path == "/api/blackbox/trips":
             return self._json(200, {"trips": blackbox.list_trips(),
                                      "active": _trip["active"]})
