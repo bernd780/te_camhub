@@ -532,10 +532,18 @@ async function viewBle(m){
       try{
         const r=await jpost("api/ble/probe",{name});
         if(!r.ok){$("#blemsg_"+id).textContent="✗ "+(r.error||"Fehler");return;}
-        $("#blemsg_"+id).textContent="✓ Ermittlung abgeschlossen";
-        out.innerHTML=`<table class="probe"><tbody>${r.results.map(x=>
+        const okCount=r.results.filter(x=>x.ok).length;
+        $("#blemsg_"+id).textContent=`✓ Ermittlung abgeschlossen (${okCount}/${r.results.length} erlaubt)`;
+        let html=`<table class="probe"><tbody>${r.results.map(x=>
           `<tr><td>${x.ok?"✓":"✗"}</td><td>${x.label}</td><td class="note">${x.detail||""}</td></tr>`
         ).join("")}</tbody></table>`;
+        if(r.untested&&r.untested.length){
+          html+=`<div class="note" style="margin-top:10px">Nicht automatisch getestet:</div>`;
+          html+=`<table class="probe"><tbody>${r.untested.map(x=>
+            `<tr><td>⊘</td><td>${x.label}</td><td class="note">${x.reason||""}</td></tr>`
+          ).join("")}</tbody></table>`;
+        }
+        out.innerHTML=html;
       }catch(e){
         $("#blemsg_"+id).textContent="✗ Verbindungsfehler – bitte erneut versuchen";
       }

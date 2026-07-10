@@ -205,32 +205,92 @@ def ble_test_role(name, role):
     return {"ok": True, "detail": detail}
 
 
+# Every command tried against the real vehicle to empirically determine
+# what a paired key's role can actually do -- confirmed 2026-07-10 against
+# a real charging_manager key. Read commands always succeed; actuation
+# commands outside the charging domain are consistently rejected by the
+# vehicle itself (INSUFFICIENT_PRIVILEGES / GENERICERROR_UNAUTHORIZED),
+# not merely by our own client -- exit code and vehicle error text are
+# authoritative, this isn't a guess.
 BLE_PROBE_COMMANDS = [
     ("Ladezustand lesen", ["state", "charge"]),
     ("Verriegelung/Türen lesen", ["state", "closures"]),
+    ("Klimazustand lesen", ["state", "climate"]),
+    ("Reifendruck lesen", ["state", "tire-pressure"]),
+    ("Standort lesen", ["state", "location"]),
+    ("Fahrzustand lesen", ["state", "drive"]),
+    ("Medienstatus lesen", ["state", "media"]),
+    ("Medien-Details lesen", ["state", "media-detail"]),
+    ("Lade-Zeitplan lesen", ["state", "charge-schedule"]),
+    ("Vorklimatisierungs-Zeitplan lesen", ["state", "precondition-schedule"]),
+    ("Software-Update-Status lesen", ["state", "software-update"]),
+    ("Kindersicherung-Status lesen", ["state", "parental-controls"]),
     ("Basiszustand lesen (VCSEC, auch bei schlafendem Auto)", ["body-controller-state"]),
+    ("Alle Schlüssel auflisten", ["list-keys"]),
+    ("Erreichbarkeit prüfen (ping)", ["ping"]),
     ("Ladeport öffnen", ["charge-port-open"]),
     ("Ladeport schließen", ["charge-port-close"]),
     ("Laden starten", ["charging-start"]),
     ("Laden stoppen", ["charging-stop"]),
+    ("Ladegrenze setzen (aktueller Wert, kein Effekt)", ["charging-set-limit", "80"]),
+    ("Ladestrom setzen (aktueller Wert, kein Effekt)", ["charging-set-amps", "16"]),
+    ("Lade-Zeitplan abbrechen", ["charging-schedule-cancel"]),
     ("Auto aufwecken", ["wake"]),
     ("Hupen", ["honk"]),
     ("Lichter blinken", ["flash-lights"]),
+    ("Zubehör-Stromversorgung an", ["keep-accessory-power", "on"]),
+    ("Zubehör-Stromversorgung aus", ["keep-accessory-power", "off"]),
+    ("Lautstärke lauter", ["media-volume-up"]),
+    ("Lautstärke leiser", ["media-volume-down"]),
+    ("Nächster Titel", ["media-next-track"]),
+    ("Vorheriger Titel", ["media-previous-track"]),
+    ("Play/Pause", ["media-toggle-playback"]),
+    ("Nächster Favorit", ["media-next-favorite"]),
+    ("Vorheriger Favorit", ["media-previous-favorite"]),
+    ("Entriegeln", ["unlock"]),
+    ("Fenster einen Spalt öffnen", ["windows-vent"]),
+    ("Fenster schließen", ["windows-close"]),
+    ("Klima einschalten", ["climate-on"]),
+    ("Klima ausschalten", ["climate-off"]),
+    ("Sentry-Modus an", ["sentry-mode", "on"]),
+    ("Sentry-Modus aus", ["sentry-mode", "off"]),
+    ("Tonneau öffnen (nur Cybertruck)", ["tonneau-open"]),
+    ("Lenkradheizung aus", ["steering-wheel-heater", "off"]),
+]
+
+# Commands that exist in tesla-control but are never auto-tested, with the
+# reason -- either the vehicle-side effect can't be reliably undone, the
+# command needs parameters we can't choose safely, or (key/software-update/
+# guest-data) the blast radius of an unexpected success is too high to
+# probe just for curiosity.
+BLE_UNTESTED_COMMANDS = [
+    ("Fernstart (drive)", "Risiko einer ungewollten Fahrzeugbewegung"),
+    ("Frunk öffnen", "kein Gegenbefehl zum Schließen vorhanden"),
+    ("Kofferraum öffnen/schließen/toggeln", "Schließen nicht auf allen Modellen verfügbar, Zustand nicht sicher wiederherstellbar"),
+    ("Sitzheizung setzen", "braucht Position + Stufe, zu viele Kombinationen"),
+    ("Zieltemperatur setzen", "braucht konkreten Temperaturwert"),
+    ("Auto-Sitz+Klima-Automatik", "verändert Komfort-Einstellungen ohne klaren Rückweg"),
+    ("Valet-Modus an/aus", "verändert Fahrzeugverhalten dauerhaft"),
+    ("Gast-Modus an/aus", "verändert Fahrzeugkonfiguration dauerhaft"),
+    ("Kindersicherung setzen/Geschwindigkeitslimit", "kann Fahrverhalten einschränken"),
+    ("Niedrig-Energie-Modus", "könnte Erreichbarkeit für weitere Tests verschlechtern"),
+    ("Lade-/Vorklimatisierungs-Zeitplan hinzufügen/entfernen", "braucht komplexe Parameter (Zeit, Ort)"),
+    ("Autosecure (nur Model X)", "schließt Flügeltüren und verriegelt -- deckt sich mit unlock-Test"),
+    ("Software-Update starten/abbrechen", "störend/destruktiv"),
+    ("Gastdaten löschen", "destruktiv"),
+    ("Schlüssel hinzufügen/entfernen/umbenennen", "sicherheitskritisch -- Risiko, eigenen Zugriff zu verlieren"),
+    ("Produktinfo / beliebiger API-Aufruf (get/post)", "braucht Fleet-API-OAuth-Token, über BLE nicht nutzbar"),
 ]
 
 
 def ble_probe_role(name):
     """Empirically determine which commands a paired key can actually
-    execute against the real vehicle: try a curated list of representative
-    commands (reads plus a few benign/reversible actions) and record the
-    vehicle's real response, rather than relying on Tesla's documentation
-    of what a role "should" be allowed to do.
-
-    Deliberately excludes commands with persistent or safety-relevant
-    effects (lock/unlock, climate, valet/guest mode, key management,
-    windows, ...) even though the role is expected to be rejected for
-    them -- an unexpected authorization succeeding there isn't a risk
-    worth taking just to confirm a boundary."""
+    execute against the real vehicle: try every command in
+    BLE_PROBE_COMMANDS and record the vehicle's real response, rather than
+    relying on Tesla's documentation of what a role "should" be allowed to
+    do. Includes both reads and actuation commands (some expected to be
+    rejected) -- see BLE_UNTESTED_COMMANDS for the ones deliberately left
+    out and why."""
     vin = hubconf.getval("TESLA_BLE_VIN")
     if not vin:
         return {"ok": False, "error": "Fahrzeug-VIN erst eintragen und speichern"}
@@ -245,7 +305,8 @@ def ble_probe_role(name):
         lines = (r.stderr or r.stdout or "").strip().splitlines()
         detail = lines[-1] if lines else ("OK" if ok else "Fehler")
         results.append({"label": label, "ok": ok, "detail": detail[:200]})
-    return {"ok": True, "results": results}
+    return {"ok": True, "results": results,
+            "untested": [{"label": l, "reason": r} for l, r in BLE_UNTESTED_COMMANDS]}
 
 
 def ble_status_role(name):
