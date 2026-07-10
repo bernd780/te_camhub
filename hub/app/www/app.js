@@ -477,8 +477,9 @@ async function viewBle(m){
       <div id="ble_reads_list"></div>
     </div>
     <div class="card" id="ble_actions_card" style="display:none"><h3>Befehle (auslösen)</h3>
-      <div class="note">Sendet echte Befehle ans Auto.</div>
+      <div class="note">Sendet echte Befehle ans Auto. Befehle, die das Fahrzeug mit einem Rechte-Fehler ablehnen, verschwinden automatisch aus dieser Liste.</div>
       <div id="ble_actions_list"></div>
+      <div class="saverow"><button class="btn sm ghost" id="ble_reset_unavailable">Ausgeblendete Befehle erneut versuchen</button><span class="note" id="ble_reset_msg"></span></div>
     </div>`;
   m.append(box);
   $("#blevinsave").onclick=async()=>{
@@ -589,10 +590,21 @@ async function viewBle(m){
         if(valEl&&valEl.value)body.value=valEl.value;
         try{
           const r=await jpost("api/ble/exec",body);
-          $("#bleactmsg_"+c.id).textContent=r.ok?"✓ "+(r.detail||"OK"):"✗ "+(r.error||r.detail||"Fehler");
+          const msg=r.ok?"✓ "+(r.detail||"OK"):"✗ "+(r.error||r.detail||"Fehler");
+          if(!r.ok&&/INSUFFICIENT_PRIVILEGES|UNAUTHORIZED/i.test(r.error||r.detail||"")){
+            toast(c.label+": vom Auto abgelehnt, wird ausgeblendet");
+            loadBleCommands(id);
+            return;
+          }
+          $("#bleactmsg_"+c.id).textContent=msg;
         }catch(e){$("#bleactmsg_"+c.id).textContent="✗ Verbindungsfehler";}
       };
     });
+    $("#ble_reset_unavailable").onclick=async()=>{
+      $("#ble_reset_msg").textContent="setze zurück…";
+      try{await jpost("api/ble/reset_unavailable",{});$("#ble_reset_msg").textContent="✓";loadBleCommands(id);}
+      catch(e){$("#ble_reset_msg").textContent="✗ Verbindungsfehler";}
+    };
     $("#ble_reads_card").style.display="";
     $("#ble_actions_card").style.display="";
     for(const c of cmds.reads){

@@ -185,7 +185,8 @@ def ble_mqtt_loop():
                 continue
             if not diag.ble_status_role("awake").get("paired"):
                 continue
-            for read_id in diag.BLE_READS:
+            reads, _actions = diag.ble_available_commands()
+            for read_id in reads:
                 r = diag.ble_read("awake", read_id)
                 if r.get("ok"):
                     mqtt_ha.publish_ble_read(read_id, r.get("values") or {})
@@ -416,9 +417,10 @@ class H(BaseHTTPRequestHandler):
         if path == "/api/nas/raw_keys/pairing":
             return self._json(200, nassync.pairing_status(CFG["state"]))
         if path == "/api/ble/commands":
+            reads, actions = diag.ble_available_commands()
             return self._json(200, {
-                "reads": [{"id": i, "label": l} for i, (l, _a) in diag.BLE_READS.items()],
-                "actions": [{"id": i, "label": l} for i, (l, _a) in diag.BLE_ACTIONS.items()],
+                "reads": [{"id": i, "label": l} for i, (l, _a) in reads.items()],
+                "actions": [{"id": i, "label": l} for i, (l, _a) in actions.items()],
             })
         return self._json(404, {"error": "not found"})
 
@@ -543,6 +545,8 @@ class H(BaseHTTPRequestHandler):
                 return self._json(200, diag.ble_exec(body.get("name", ""), body.get("id", ""), body.get("value")))
             except Exception as e:
                 return self._json(200, {"ok": False, "error": str(e)[:300]})
+        if path == "/api/ble/reset_unavailable":
+            return self._json(200, diag.ble_reset_unavailable())
         if path == "/api/nas/sync_status/refresh":
             threading.Thread(target=lambda: nassync.refresh_status(CFG["scan"]), daemon=True).start()
             return self._json(200, {"ok": True})

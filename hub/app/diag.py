@@ -3,8 +3,22 @@ Diagnostics/actions for the Hub: system status, log tails, reboot, drive toggle,
 sync/retention/BLE triggers. Thin wrappers over the existing teslausb scripts and
 standard tools (the Hub runs as root via systemd).
 """
-import os, subprocess, urllib.request, tarfile, io, json, time
+import os, subprocess, urllib.request, tarfile, io, json, time, threading
 import hubconf
+
+# The Pi has exactly one Bluetooth adapter; two tesla-control invocations
+# at once collide ("device or resource busy") instead of queueing. Every
+# BLE command (reads, actions, pairing, status) goes through this lock so
+# concurrent callers (page auto-load, MQTT loop, manual retries) serialize
+# instead of failing each other.
+_ble_lock = threading.Lock()
+
+def _tc_run(args, timeout=30):
+    """Run a tesla-control invocation serialized against the single
+    Bluetooth adapter (see _ble_lock above)."""
+    with _ble_lock:
+        return subprocess.run(args, capture_output=True, text=True, timeout=timeout)
+
 
 def _run(cmd, timeout=10):
     try:
@@ -155,9 +169,8 @@ def ble_pair_role(name, role):
     if not kr.get("ok"):
         return kr
     _priv, pub = _ble_keypath(name)
-    r = subprocess.run([f"{BLE_BIN}/tesla-control", "-ble", "-vin", vin.upper(),
-                         "add-key-request", pub, role, "cloud_key"],
-                        capture_output=True, text=True, timeout=60)
+    r = _tc_run([f"{BLE_BIN}/tesla-control", "-ble", "-vin", vin.upper(),
+                 "add-key-request", pub, role, "cloud_key"], timeout=60)
     if r.returncode != 0:
         return {"ok": False, "error": (r.stderr or r.stdout or "Kopplungsanfrage fehlgeschlagen").strip()[:300]}
     return {"ok": True}
@@ -181,17 +194,17 @@ def ble_test_role(name, role):
     base = [f"{BLE_BIN}/tesla-control", "-ble", "-vin", vin.upper(), "-key-file", priv]
 
     if role == "charging_manager":
-        r1 = subprocess.run(base + ["charge-port-open"], capture_output=True, text=True, timeout=30)
+        r1 = _tc_run(base + ["charge-port-open"])
         if r1.returncode != 0:
             return {"ok": False, "error": (r1.stderr or r1.stdout or "Ladeport öffnen fehlgeschlagen").strip()[:300]}
         time.sleep(4)
-        r2 = subprocess.run(base + ["charge-port-close"], capture_output=True, text=True, timeout=30)
+        r2 = _tc_run(base + ["charge-port-close"])
         if r2.returncode != 0:
             return {"ok": True, "detail": "Ladeport wurde geöffnet, Schließen aber fehlgeschlagen: "
                                            + (r2.stderr or r2.stdout or "Fehler").strip()[:200]}
         return {"ok": True, "detail": "Ladeport wurde geöffnet und wieder geschlossen -- am Auto sichtbar/hörbar gewesen?"}
 
-    r = subprocess.run(base + ["state", "closures"], capture_output=True, text=True, timeout=30)
+    r = _tc_run(base + ["state", "closures"])
     if r.returncode != 0:
         return {"ok": False, "error": (r.stderr or r.stdout or "Abfrage fehlgeschlagen").strip()[:300]}
     try:
@@ -368,7 +381,7 @@ def ble_probe_role(name):
     base = [f"{BLE_BIN}/tesla-control", "-ble", "-vin", vin.upper(), "-key-file", priv]
     results = []
     for label, args in BLE_PROBE_COMMANDS:
-        r = subprocess.run(base + args, capture_output=True, text=True, timeout=30)
+        r = _tc_run(base + args)
         ok = r.returncode == 0
         lines = (r.stderr or r.stdout or "").strip().splitlines()
         detail = lines[-1] if lines else ("OK" if ok else "Fehler")
@@ -428,27 +441,85 @@ def _ble_base(name):
     return [f"{BLE_BIN}/tesla-control", "-ble", "-vin", vin.upper(), "-key-file", priv], None
 
 
+def _scalarize(v):
+    """Plain scalar as-is; a protobuf oneof enum serializes as {"Name": {}}
+    -- reduce that to just the enum name. Anything else (nested objects with
+    more than one key, lists) isn't a simple field, skip it."""
+    if isinstance(v, (str, int, float, bool)):
+        return v
+    if isinstance(v, dict) and len(v) == 1:
+        return next(iter(v.keys()))
+    return None
+
+
 def _flatten_state(raw_stdout):
-    """Tesla's `state CATEGORY` output is one top-level key wrapping a flat-ish
-    object; protobuf oneof fields serialize as {"EnumName": {}}. Flatten both
-    into plain scalars so they're usable as MQTT sensor values / UI rows
-    without hardcoding field names per category."""
+    """`tesla-control` doesn't use one consistent JSON shape across commands:
+    - most `state CATEGORY` calls wrap a single nested object in one
+      top-level key (e.g. {"chargeState": {...}}) -- flatten that object.
+    - `state drive` wraps *two* top-level keys, each its own nested object
+      (driveState + locationState) -- flatten both, prefixed to avoid
+      collisions.
+    - `body-controller-state` has no wrapper at all, fields are already at
+      the top level -- flatten those directly.
+    Handles all three so read results are never silently empty."""
     try:
         data = json.loads(raw_stdout)
     except Exception:
         return {}
-    if not isinstance(data, dict) or len(data) != 1:
+    if not isinstance(data, dict) or not data:
         return {}
-    inner = next(iter(data.values()))
-    if not isinstance(inner, dict):
-        return {}
-    out = {}
-    for k, v in inner.items():
-        if isinstance(v, (str, int, float, bool)):
-            out[k] = v
-        elif isinstance(v, dict) and len(v) == 1:
-            out[k] = next(iter(v.keys()))
-    return out
+
+    if len(data) == 1:
+        inner = next(iter(data.values()))
+        if isinstance(inner, dict):
+            out = {k: _scalarize(v) for k, v in inner.items()}
+            out = {k: v for k, v in out.items() if v is not None}
+            if out:
+                return out
+
+    if all(isinstance(v, dict) for v in data.values()):
+        out = {}
+        for wrapper, inner in data.items():
+            for k, v in inner.items():
+                sv = _scalarize(v)
+                if sv is not None:
+                    out[f"{wrapper}.{k}"] = sv
+        if out:
+            return out
+
+    out = {k: _scalarize(v) for k, v in data.items()}
+    return {k: v for k, v in out.items() if v is not None}
+
+
+# Command ids that have actually failed with a privilege/authorization
+# error against the real vehicle in this run. Tesla's own docs warn role
+# capabilities "may change as new features are added" -- confirmed true in
+# practice (charge-port-open/honk/flash-lights worked earlier the same day
+# this was built, then started failing) -- so a command that was allowed
+# once is not trusted to stay allowed. Read-only in-memory: resets on Hub
+# restart, and can be cleared via ble_reset_unavailable() to let a command
+# be tried again (e.g. after Tesla changes something back).
+_ble_unavailable = set()
+_PRIVILEGE_ERROR_MARKERS = ("INSUFFICIENT_PRIVILEGES", "UNAUTHORIZED")
+
+
+def _looks_like_privilege_error(text):
+    t = (text or "").upper()
+    return any(m in t for m in _PRIVILEGE_ERROR_MARKERS)
+
+
+def ble_available_commands():
+    """BLE_READS/BLE_ACTIONS minus anything that has actually failed with a
+    privilege error this run -- this is the list the UI should show."""
+    return (
+        {i: v for i, v in BLE_READS.items() if i not in _ble_unavailable},
+        {i: v for i, v in BLE_ACTIONS.items() if i not in _ble_unavailable},
+    )
+
+
+def ble_reset_unavailable():
+    _ble_unavailable.clear()
+    return {"ok": True}
 
 
 def ble_read(name, read_id):
@@ -461,9 +532,12 @@ def ble_read(name, read_id):
     base, err = _ble_base(name)
     if err:
         return err
-    r = subprocess.run(base + args, capture_output=True, text=True, timeout=30)
+    r = _tc_run(base + args)
     if r.returncode != 0:
-        return {"ok": False, "error": (r.stderr or r.stdout or "Fehler").strip()[:300]}
+        err = (r.stderr or r.stdout or "Fehler").strip()[:300]
+        if _looks_like_privilege_error(err):
+            _ble_unavailable.add(read_id)
+        return {"ok": False, "error": err}
     if read_id == "list_keys":
         lines = [l for l in r.stdout.splitlines() if l.strip()]
         return {"ok": True, "label": label, "values": {"anzahl_schluessel": len(lines)}}
@@ -487,10 +561,12 @@ def ble_exec(name, action_id, value=None):
             final_args[-1] = str(int(value))
         except (TypeError, ValueError):
             return {"ok": False, "error": "ungültiger Wert"}
-    r = subprocess.run(base + final_args, capture_output=True, text=True, timeout=30)
+    r = _tc_run(base + final_args)
     ok = r.returncode == 0
     lines = (r.stderr or r.stdout or "").strip().splitlines()
     detail = lines[-1] if lines else ("OK" if ok else "Fehler")
+    if not ok and _looks_like_privilege_error(detail):
+        _ble_unavailable.add(action_id)
     return {"ok": ok, "label": label, "detail": detail[:200]}
 
 
@@ -499,9 +575,8 @@ def ble_status_role(name):
     priv, _pub = _ble_keypath(name)
     if not vin or not os.path.isfile(priv) or not ble_binaries_installed():
         return {"paired": False}
-    r = subprocess.run([f"{BLE_BIN}/tesla-control", "-ble", "-vin", vin.upper(),
-                         "session-info", priv, "infotainment"],
-                        capture_output=True, text=True, timeout=20)
+    r = _tc_run([f"{BLE_BIN}/tesla-control", "-ble", "-vin", vin.upper(),
+                 "session-info", priv, "infotainment"], timeout=20)
     return {"paired": r.returncode == 0}
 
 def apply_ap_fallback(enabled, ssid=None, password=None, ap_ip=None):
