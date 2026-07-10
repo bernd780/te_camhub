@@ -414,6 +414,27 @@ def apply_ap_fallback(enabled, ssid=None, password=None, ap_ip=None):
     return {"ok": True}
 
 
+def set_ssh_password(password):
+    """Set/reset the Linux login password for the 'pi' user -- the SSH
+    login used throughout setup and by this Hub's own deploy workflow.
+    Deliberately a separate secret from the vault passphrase (not derived
+    from or synced to it): the vault password is never stored in
+    retrievable plaintext and can be reset independently (forgot-password
+    flow), so tying SSH auth to it would be both technically awkward and a
+    good way to accidentally lock out SSH access."""
+    if not password or len(password) < 8:
+        return {"ok": False, "error": "Passwort muss mindestens 8 Zeichen haben"}
+    subprocess.run(["mount", "/", "-o", "remount,rw"], capture_output=True)
+    try:
+        r = subprocess.run(["chpasswd"], input=f"pi:{password}\n", text=True,
+                            capture_output=True, timeout=10)
+        if r.returncode != 0:
+            return {"ok": False, "error": (r.stderr or "chpasswd fehlgeschlagen").strip()[:200]}
+        return {"ok": True}
+    finally:
+        subprocess.run(["mount", "/", "-o", "remount,ro"], capture_output=True)
+
+
 def apply_ssh(disable):
     """Enable/disable SSH password login via a drop-in (audit hardening)."""
     subprocess.run(["mount", "/", "-o", "remount,rw"], capture_output=True)

@@ -644,6 +644,11 @@ class H(BaseHTTPRequestHandler):
                 return self._json(200, {"ok": True})
             except VaultError as e:
                 return self._json(400, {"ok": False, "error": str(e)})
+        if path == "/api/system/ssh_password":
+            try:
+                return self._json(200, diag.set_ssh_password(body.get("password", "")))
+            except Exception as e:
+                return self._json(200, {"ok": False, "error": str(e)[:300]})
         if path == "/api/prepare":
             cid = body.get("id", "")
             _fetch_keys_for_clip(cid)

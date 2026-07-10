@@ -794,6 +794,12 @@ async function viewSettings(m){
         <button class="btn sm ghost" id="pwchange">Tresor-Passwort ändern</button>
       </div>
       <div class="note" id="pwmsg"></div>
+      <div class="saverow" style="flex-wrap:wrap;gap:10px 16px">
+        <input id="s_ssh_pw_new" type="password" placeholder="neues SSH-Passwort (min. 8 Zeichen)" style="flex:1;min-width:220px;padding:10px 12px;background:var(--bg2);border:1px solid var(--line);border-radius:10px;color:var(--text)">
+        <button class="btn sm ghost" id="sshpwchange">SSH-Passwort setzen</button>
+      </div>
+      <div class="note">Setzt das Linux-Login-Passwort des Benutzers <code>pi</code> für den SSH-Zugang neu — unabhängig vom Tresor-Passwort (bewusst getrennt: das Tresor-Passwort wird nirgends im Klartext gespeichert und könnte sich unabhängig ändern, eine Kopplung wäre riskant). Wirkt sofort, ohne Neustart.</div>
+      <div class="note" id="sshpwmsg"></div>
       ${fld("Zeitzone","s_time_zone","text",c.time_zone,"Europe/Berlin")}
       ${fld("Hostname","s_teslausb_hostname","text",c.teslausb_hostname)}
     </div>
@@ -824,6 +830,16 @@ async function viewSettings(m){
     const r=await jpost("api/vault/change_pass",{old:oldp,new:newp});
     if(r.ok){$("#pwmsg").textContent="✓ Passwort geändert";$("#s_pw_old").value="";$("#s_pw_new").value="";toast("Tresor-Passwort geändert");}
     else{$("#pwmsg").textContent="✗ "+(r.error||"Fehler");}
+  };
+  $("#sshpwchange").onclick=async()=>{
+    const newp=$("#s_ssh_pw_new").value;
+    if(!newp||newp.length<8){$("#sshpwmsg").textContent="✗ Passwort sollte mind. 8 Zeichen haben";return;}
+    $("#sshpwmsg").textContent="setze…";
+    try{
+      const r=await jpost("api/system/ssh_password",{password:newp});
+      if(r.ok){$("#sshpwmsg").textContent="✓ SSH-Passwort gesetzt";$("#s_ssh_pw_new").value="";toast("SSH-Passwort geändert");}
+      else{$("#sshpwmsg").textContent="✗ "+(r.error||"Fehler");}
+    }catch(e){$("#sshpwmsg").textContent="✗ Verbindungsfehler";}
   };
   async function refreshPairingStatus(){
     try{
