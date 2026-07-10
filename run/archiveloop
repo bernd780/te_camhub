@@ -750,6 +750,11 @@ function snapshotloop {
     then
       log "NAS reachable after periodic snapshot, archiving now"
       archive_lock_and_run
+      # archive_clips may have briefly disconnected the USB gadget to clean
+      # up the cam mount (see clean_cam_mount) -- unlike the main loop, we
+      # don't fall through to a connect_usb_drives_to_host call afterwards,
+      # so make sure the car always gets its drive back.
+      connect_usb_drives_to_host
     fi
   done
 }
