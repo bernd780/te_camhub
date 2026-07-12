@@ -18,7 +18,7 @@ from urllib.parse import urlparse, parse_qs
 from vault import Vault, VaultError
 from viewer import Viewer
 from tesla_auth import TeslaAuth
-import tesla_api, keybridge, hubconf, files as filemod, diag, nassync, mqtt_ha, eventlog, blackbox, canbus
+import tesla_api, keybridge, hubconf, files as filemod, diag, nassync, mqtt_ha, eventlog, blackbox, canbus, keepawake
 
 WWW = os.path.join(os.path.dirname(os.path.abspath(__file__)), "www")
 
@@ -172,6 +172,9 @@ def _ble_mqtt_command(action_id, value):
 mqtt_ha.set_command_handler(_ble_mqtt_command)
 
 
+_ble_mqtt_all_failing = False
+
+
 def ble_mqtt_loop():
     """Publish BLE sensor readings to Home Assistant every 15 minutes --
     much less often than mqtt_loop's other sensors, since each read is a
@@ -182,16 +185,34 @@ def ble_mqtt_loop():
     observed to report paired=False even while plain reads (ping, state
     charge, ...) succeed seconds later against the same key -- it's a
     stricter/different probe than an actual read needs. Each read's own
-    success/failure is what decides whether it gets published."""
+    success/failure is what decides whether it gets published.
+
+    If every read in a cycle fails, that's a real (not just cosmetic)
+    outage -- HA is left showing stale last-known values with no
+    indication why. Log it once on the transition into/out of "all
+    failing" (not every 15 min while it stays down) so it's visible in the
+    Ereignis-Log instead of only in the Hub's own stdout/journal."""
+    global _ble_mqtt_all_failing
     time.sleep(35)  # let mqtt_loop's own connect-and-discover cycle land first
     while True:
         try:
             if hubconf.getval("MQTT_ENABLED") == "true":
                 reads, _actions = diag.ble_available_commands()
+                any_ok, last_err = False, None
                 for read_id in reads:
                     r = diag.ble_read("awake", read_id)
                     if r.get("ok"):
+                        any_ok = True
                         mqtt_ha.publish_ble_read(read_id, r.get("values") or {})
+                    else:
+                        last_err = r.get("error")
+                if reads:
+                    if not any_ok and not _ble_mqtt_all_failing:
+                        eventlog.log_event("ble", f"BLE-Fahrzeugdaten aktuell nicht abrufbar: {last_err or 'unbekannter Fehler'}")
+                        _ble_mqtt_all_failing = True
+                    elif any_ok and _ble_mqtt_all_failing:
+                        eventlog.log_event("ble", "BLE-Fahrzeugdaten wieder abrufbar")
+                        _ble_mqtt_all_failing = False
         except Exception as e:
             print("[hub] ble mqtt:", e, flush=True)
         time.sleep(900)
@@ -245,6 +266,28 @@ def temp_log_loop():
                     was_hot = False
         except Exception as e:
             print("[hub] temp log:", e, flush=True)
+        time.sleep(60)
+
+
+def keepawake_loop():
+    """Sends the periodic BLE 'wake' nudges that keep the car from sleeping
+    while the switch is active (see keepawake.py for why a one-shot command
+    isn't enough), and auto-turns the switch back off once its expiry
+    passes. State lives on disk, so this also catches an expiry that fell
+    due while the Hub was restarting/rebooting."""
+    while True:
+        try:
+            r = keepawake.tick()
+            if r is not None:
+                ev = r.get("event")
+                if ev == "expired":
+                    eventlog.log_event("keepawake", "Wach halten automatisch beendet (Zeit abgelaufen)")
+                elif ev == "nudge_failed":
+                    eventlog.log_event("keepawake", f"Wake-Nudge schlägt fehl: {r.get('error') or 'unbekannter Fehler'}")
+                elif ev == "nudge_recovered":
+                    eventlog.log_event("keepawake", "Wake-Nudge funktioniert wieder")
+        except Exception as e:
+            print("[hub] keepawake loop:", e, flush=True)
         time.sleep(60)
 
 
@@ -561,6 +604,10 @@ class H(BaseHTTPRequestHandler):
             return self._json(200, nassync.media_status())
         if path == "/api/ble/status":
             return self._json(200, diag.ble_status_role(self._qs("name")))
+        if path == "/api/keepawake/status":
+            return self._json(200, keepawake.status())
+        if path == "/api/canbus/monitor/status":
+            return self._json(200, canbus.monitor_status())
         if path == "/api/nas/raw_keys/pairing":
             return self._json(200, nassync.pairing_status(CFG["state"]))
         if path == "/api/ble/commands":
@@ -722,12 +769,30 @@ class H(BaseHTTPRequestHandler):
                 return self._json(200, {"ok": False, "error": str(e)[:300]})
         if path == "/api/ble/reset_unavailable":
             return self._json(200, diag.ble_reset_unavailable())
+        if path == "/api/keepawake/start":
+            r = keepawake.start(body.get("hours"))
+            if r.get("ok"):
+                eventlog.log_event("keepawake", f"Wach halten aktiviert ({r.get('hours'):.1f}h, alle 5 Min. Wake-Nudge)")
+            return self._json(200, r)
+        if path == "/api/keepawake/stop":
+            r = keepawake.stop()
+            eventlog.log_event("keepawake", "Wach halten beendet")
+            return self._json(200, r)
         if path == "/api/canbus/read":
             try:
                 dur = int(body.get("duration") or 5)
             except (TypeError, ValueError):
                 dur = 5
             return self._json(200, canbus.read(dur))
+        if path == "/api/canbus/monitor/start":
+            return self._json(200, canbus.start_monitor())
+        if path == "/api/canbus/monitor/stop":
+            return self._json(200, canbus.stop_monitor())
+        if path == "/api/canbus/write_action":
+            return self._json(200, canbus.write_action(body.get("id", ""), confirm=bool(body.get("confirm"))))
+        if path == "/api/canbus/write_raw":
+            return self._json(200, canbus.write_raw(body.get("can_id", ""), body.get("data", ""),
+                                                      confirm=bool(body.get("confirm"))))
         if path == "/api/nas/sync_status/refresh":
             threading.Thread(target=lambda: nassync.refresh_status(CFG["scan"]), daemon=True).start()
             return self._json(200, {"ok": True})
@@ -831,6 +896,7 @@ def main():
     VIEWER = Viewer(a.scan, a.out, VAULT)
     eventlog.init(a.state)
     blackbox.init(a.state)
+    keepawake.init(a.state)
     threading.Thread(target=autolock_loop, daemon=True).start()
     threading.Thread(target=key_fetch_loop, daemon=True).start()
     threading.Thread(target=nas_sync_loop, daemon=True).start()
@@ -839,6 +905,7 @@ def main():
     threading.Thread(target=temp_log_loop, daemon=True).start()
     threading.Thread(target=connectivity_log_loop, daemon=True).start()
     threading.Thread(target=trip_watch_loop, daemon=True).start()
+    threading.Thread(target=keepawake_loop, daemon=True).start()
     if a.redirect80:
         threading.Thread(target=_redirect80, daemon=True).start()
     httpd = ThreadingHTTPServer(("0.0.0.0", a.port), H)

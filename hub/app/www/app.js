@@ -469,6 +469,16 @@ async function viewBle(m){
       ${fld("Fahrzeug-VIN","ble_vin","text",c.tesla_ble_vin)}
       <div class="saverow"><button class="btn sm ghost" id="blevinsave">VIN speichern</button><span class="note" id="blevinmsg"></span></div>
     </div>
+    <div class="card"><h3>Auto wach halten</h3>
+      <div class="note">Sendet alle 5 Minuten per BLE einen <code>wake</code>-Befehl ans Auto, damit es nicht einschläft -- z.&nbsp;B. während einer längeren Aufräum-/Reinigungsaktion. (<code>keep-accessory-power</code> allein reicht dafür nicht: laut Tesla gilt das nicht für den von Dashcam/USB genutzten Datenport -- das haben wir in der Praxis auch so beobachtet, deshalb der periodische Nudge statt eines einmaligen Befehls.) Schaltet sich nach der eingestellten Zeit automatisch wieder aus, "Jetzt beenden" geht jederzeit vorzeitig. Braucht den gekoppelten <b>Wachhalten</b>-Schlüssel unten.</div>
+      <div class="saverow"><span class="note" id="keepawake_status">lädt…</span></div>
+      <div class="saverow" style="flex-wrap:wrap">
+        <input type="number" id="keepawake_hours" value="24" min="1" max="72" style="width:70px;padding:10px 12px;background:var(--bg2);border:1px solid var(--line);border-radius:10px;color:var(--text)">
+        <span class="note">Stunden</span>
+        <button class="btn sm" id="keepawake_on">Einschalten</button>
+        <button class="btn sm ghost" id="keepawake_off" style="display:none">Jetzt beenden</button>
+      </div>
+    </div>
     <div class="card"><h3>BLE-Programme</h3>
       <div class="note">Die offiziellen Tesla-Kommandozeilenwerkzeuge (<code>tesla-control</code>, <code>tesla-keygen</code>), mit denen BLE-Schlüssel erzeugt und gekoppelt werden.</div>
       <div class="saverow" style="flex-wrap:wrap">
@@ -494,6 +504,7 @@ async function viewBle(m){
     </div>
     <div class="card" id="ble_actions_card" style="display:none"><h3>Befehle (auslösen)</h3>
       <div class="note">Sendet echte Befehle ans Auto. Befehle, die das Fahrzeug mit einem Rechte-Fehler ablehnen, verschwinden automatisch aus dieser Liste.</div>
+      <div class="note">Kein Handschuhfach-Befehl hier: Teslas offizielles Kommandowerkzeug (<code>tesla-control</code>) kennt keinen "Glovebox"-Befehl -- nur Kofferraum/Frunk. Das Handschuhfach lässt sich nur über ein rohes, unsigniertes CAN-Signal auslösen, nicht über diesen authentifizierten Kanal -- dafür gibt es den Bereich "⚠ Experimentell: Rohbefehle" unter <b>CAN-Bus</b>.</div>
       <div id="ble_actions_list"></div>
       <div class="saverow"><button class="btn sm ghost" id="ble_reset_unavailable">Ausgeblendete Befehle erneut versuchen</button><span class="note" id="ble_reset_msg"></span></div>
     </div>`;
@@ -629,11 +640,43 @@ async function viewBle(m){
   async function refreshBleStatus(id,name){
     try{
       const r=await jget("api/ble/status?name="+name);
-      $("#blemsg_"+id).textContent=r.paired?"✓ gekoppelt":"noch nicht gekoppelt";
-      if(r.paired)loadBleCommands(id);
+      $("#blemsg_"+id).textContent=r.paired?"✓ gekoppelt":"noch nicht gekoppelt (Status-Check unzuverlässig -- Befehle unten trotzdem versuchen)";
+      loadBleCommands(id);
     }catch(e){}
   }
   refreshBleStatus("awake","awake");
+  async function refreshKeepAwake(){
+    const statusEl=$("#keepawake_status");
+    if(!statusEl)return;
+    let r;try{r=await jget("api/keepawake/status");}catch(e){setTimeout(refreshKeepAwake,30000);return;}
+    const onBtn=$("#keepawake_on"),offBtn=$("#keepawake_off"),hoursInp=$("#keepawake_hours");
+    if(r.active){
+      const h=Math.floor(r.remaining_sec/3600),mn=Math.floor((r.remaining_sec%3600)/60);
+      statusEl.textContent=`aktiv – noch ${h}h ${mn}min`;
+      onBtn.style.display="none";offBtn.style.display="";hoursInp.disabled=true;
+    }else{
+      statusEl.textContent="aus";
+      onBtn.style.display="";offBtn.style.display="none";hoursInp.disabled=false;
+    }
+    if(document.body.contains(statusEl))setTimeout(refreshKeepAwake,30000);
+  }
+  $("#keepawake_on").onclick=async()=>{
+    $("#keepawake_status").textContent="schalte ein…";
+    try{
+      const r=await jpost("api/keepawake/start",{hours:Number($("#keepawake_hours").value)||24});
+      if(!r.ok)toast("✗ "+(r.error||"Fehler"));
+      refreshKeepAwake();
+    }catch(e){toast("✗ Verbindungsfehler");}
+  };
+  $("#keepawake_off").onclick=async()=>{
+    $("#keepawake_status").textContent="schalte aus…";
+    try{
+      const r=await jpost("api/keepawake/stop",{});
+      if(!r.ok)toast("✗ "+(r.error||r.detail||"Fehler"));
+      refreshKeepAwake();
+    }catch(e){toast("✗ Verbindungsfehler");}
+  };
+  refreshKeepAwake();
 }
 
 /* ---------------- CAN-Bus ---------------- */
@@ -647,6 +690,13 @@ async function viewCanbus(m){
       <div class="note">BLE-OBD-Dongle (z. B. UniCarScan) am OBD-Port des Autos. Der Hub verbindet sich bei Bedarf kurz per Bluetooth, liest den CAN-Bus einige Sekunden mit und trennt danach wieder &mdash; kein Dauer-Polling, kein Pairing nötig.</div>
     </div>
     <div class="card"><h3>Live-Werte</h3>
+      <div class="saverow" style="flex-wrap:wrap">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+          <input type="checkbox" id="canbus_monitor"><span>Kontinuierlich überwachen</span>
+        </label>
+        <span class="note" id="canbusmonitormsg"></span>
+      </div>
+      <div class="note">Liest alle paar Sekunden neu, solange aktiv, und zeigt den zuletzt bekannten Status jeder Adresse. Blockiert dabei zeitweise andere BLE-Aktionen (Wachhalten, Fahrzeugbefehle) mit, da der Pi nur einen Bluetooth-Adapter hat -- für längere Beobachtung gedacht, nicht dauerhaft nebenbei laufen lassen.</div>
       <div class="saverow">
         <input type="number" id="canbusdur" style="width:70px" value="5" min="2" max="15"> <span class="note">Sekunden</span>
         <button class="btn sm ghost" id="canbusread">Jetzt lesen</button><span class="note" id="canbusmsg">–</span>
@@ -656,6 +706,25 @@ async function viewCanbus(m){
     <div class="card"><h3>Unbekannte CAN-IDs</h3>
       <div class="note">Alles, was der Hub noch nicht kennt -- roher Inhalt der zuletzt gesehenen Nachricht je ID. Nützlich zum Muster-Suchen: z. B. während des Lesens eine Tür öffnen/schließen oder blinken und schauen, welche ID sich ändert.</div>
       <div id="canbusunknown"></div>
+    </div>
+    <div class="card"><h3>⚠ Experimentell: Rohbefehle</h3>
+      <div class="note warn">Schreibt unsignierte Rohdaten direkt auf den Fahrzeug-CAN-Bus -- anders als die Befehle unter "Fahrzeug (BLE)" prüft das Auto hier weder Rolle noch Signatur, es nimmt den Frame einfach an (falls das Gateway ihn überhaupt durchlässt). Nicht gegen ein echtes Fahrzeug verifiziert, keine Zähler/Prüfsumme wie in echten Tesla-Frames üblich -- kann wirkungslos bleiben oder unerwartetes Verhalten auslösen. Nur verwenden, wenn du weißt, was die gesendeten Bytes bedeuten.</div>
+      <div class="saverow"><label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+        <input type="checkbox" id="canbus_ack"><span>Ich weiß, was ich tue</span>
+      </label></div>
+      <div class="ble-row">
+        <div>Handschuhfach öffnen <span class="note">(0x3B3, UI_gloveboxRequest)</span></div>
+        <div class="saverow"><button class="btn sm ghost" id="canbus_glovebox" disabled>Senden</button><span class="note" id="canbus_glovebox_msg"></span></div>
+      </div>
+      <div class="ble-row">
+        <div>Beliebiger Frame</div>
+        <div class="saverow" style="flex-wrap:wrap">
+          <input type="text" id="canbus_raw_id" placeholder="CAN-ID (hex, z. B. 3B3)" style="width:170px;padding:10px 12px;background:var(--bg2);border:1px solid var(--line);border-radius:10px;color:var(--text)">
+          <input type="text" id="canbus_raw_data" placeholder="Daten (hex, max. 8 Byte, z. B. 01000000)" style="width:230px;padding:10px 12px;background:var(--bg2);border:1px solid var(--line);border-radius:10px;color:var(--text)">
+          <button class="btn sm ghost" id="canbus_raw_send" disabled>Senden</button>
+        </div>
+        <span class="note" id="canbus_raw_msg"></span>
+      </div>
     </div>`;
   m.append(box);
   $("#canbusmacsave").onclick=async()=>{
@@ -666,6 +735,15 @@ async function viewCanbus(m){
       $("#canbusmacmsg").textContent=r.ok?"✓ gespeichert":"✗ "+(r.error||"Fehler");
     }catch(e){$("#canbusmacmsg").textContent="✗ Verbindungsfehler";}
   };
+  function renderCanbusValues(values,unknown_frames,unknown_count){
+    const entries=Object.entries(values||{});
+    $("#canbusvals").innerHTML=entries.length?`<table class="probe"><tbody>${entries.map(([k,v])=>
+      `<tr><td>${k}</td><td class="note">${v}</td></tr>`).join("")}</tbody></table>`:'<div class="note">keine bekannten Signale dekodiert</div>';
+    const uf=Object.entries(unknown_frames||{});
+    const more=(unknown_count||0)-uf.length;
+    $("#canbusunknown").innerHTML=uf.length?`<table class="probe"><tbody>${uf.map(([id,bytes])=>
+      `<tr><td>0x${id}</td><td class="note">${bytes}</td></tr>`).join("")}</tbody></table>${more>0?`<div class="note">… und ${more} weitere</div>`:""}`:'<div class="note">keine</div>';
+  }
   $("#canbusread").onclick=async()=>{
     $("#canbusread").disabled=true;$("#canbusmsg").textContent="verbinde & lese…";
     const dur=parseInt($("#canbusdur").value,10)||5;
@@ -673,15 +751,69 @@ async function viewCanbus(m){
       const r=await jpost("api/canbus/read",{duration:dur});
       if(!r.ok){$("#canbusmsg").textContent="✗ "+(r.error||"Fehler");$("#canbusread").disabled=false;return;}
       $("#canbusmsg").textContent=`✓ ${r.can_ids_seen} CAN-IDs gesehen, ${Object.keys(r.values||{}).length} bekannte Werte`;
-      const entries=Object.entries(r.values||{});
-      $("#canbusvals").innerHTML=entries.length?`<table class="probe"><tbody>${entries.map(([k,v])=>
-        `<tr><td>${k}</td><td class="note">${v}</td></tr>`).join("")}</tbody></table>`:'<div class="note">keine bekannten Signale dekodiert</div>';
-      const uf=Object.entries(r.unknown_frames||{});
-      const more=(r.unknown_count||0)-uf.length;
-      $("#canbusunknown").innerHTML=uf.length?`<table class="probe"><tbody>${uf.map(([id,bytes])=>
-        `<tr><td>0x${id}</td><td class="note">${bytes}</td></tr>`).join("")}</tbody></table>${more>0?`<div class="note">… und ${more} weitere</div>`:""}`:'<div class="note">keine</div>';
+      renderCanbusValues(r.values,r.unknown_frames,r.unknown_count);
     }catch(e){$("#canbusmsg").textContent="✗ Verbindungsfehler";}
     $("#canbusread").disabled=false;
+  };
+  async function pollCanbusMonitor(){
+    if(!document.body.contains($("#canbusvals"))){
+      try{await jpost("api/canbus/monitor/stop",{});}catch(e){}
+      return;
+    }
+    if(!$("#canbus_monitor").checked)return;
+    let r;
+    try{r=await jget("api/canbus/monitor/status");}catch(e){setTimeout(pollCanbusMonitor,3000);return;}
+    renderCanbusValues(r.values,r.unknown_frames,r.unknown_count);
+    $("#canbusmonitormsg").textContent=r.error?("⚠ "+r.error):`aktiv – ${r.can_ids_seen} Adressen gesehen, Zyklus #${r.cycles}`;
+    setTimeout(pollCanbusMonitor,3000);
+  }
+  $("#canbus_monitor").onchange=async(e)=>{
+    if(e.target.checked){
+      $("#canbusread").disabled=true;
+      $("#canbusmonitormsg").textContent="starte…";
+      try{
+        const r=await jpost("api/canbus/monitor/start",{});
+        if(!r.ok){$("#canbusmonitormsg").textContent="✗ "+(r.error||"Fehler");e.target.checked=false;$("#canbusread").disabled=false;return;}
+        $("#canbusmonitormsg").textContent="aktiv…";
+        pollCanbusMonitor();
+      }catch(err){$("#canbusmonitormsg").textContent="✗ Verbindungsfehler";e.target.checked=false;$("#canbusread").disabled=false;}
+    }else{
+      $("#canbusmonitormsg").textContent="";
+      $("#canbusread").disabled=false;
+      try{await jpost("api/canbus/monitor/stop",{});}catch(err){}
+    }
+  };
+  (async()=>{
+    let st;try{st=await jget("api/canbus/monitor/status");}catch(e){return;}
+    if(st.active){
+      $("#canbus_monitor").checked=true;
+      $("#canbusread").disabled=true;
+      $("#canbusmonitormsg").textContent="aktiv…";
+      pollCanbusMonitor();
+    }
+  })();
+  $("#canbus_ack").onchange=(e)=>{
+    const ok=e.target.checked;
+    $("#canbus_glovebox").disabled=!ok;
+    $("#canbus_raw_send").disabled=!ok;
+  };
+  $("#canbus_glovebox").onclick=async()=>{
+    $("#canbus_glovebox").disabled=true;$("#canbus_glovebox_msg").textContent="sende…";
+    try{
+      const r=await jpost("api/canbus/write_action",{id:"glovebox_open",confirm:$("#canbus_ack").checked});
+      $("#canbus_glovebox_msg").textContent=r.ok?`✓ gesendet (Antwort: ${r.dongle_response||"–"})`:"✗ "+(r.error||"Fehler");
+    }catch(e){$("#canbus_glovebox_msg").textContent="✗ Verbindungsfehler";}
+    $("#canbus_glovebox").disabled=!$("#canbus_ack").checked;
+  };
+  $("#canbus_raw_send").onclick=async()=>{
+    $("#canbus_raw_send").disabled=true;$("#canbus_raw_msg").textContent="sende…";
+    const can_id=$("#canbus_raw_id").value.trim();
+    const data=$("#canbus_raw_data").value.trim();
+    try{
+      const r=await jpost("api/canbus/write_raw",{can_id,data,confirm:$("#canbus_ack").checked});
+      $("#canbus_raw_msg").textContent=r.ok?`✓ gesendet (Antwort: ${r.dongle_response||"–"})`:"✗ "+(r.error||"Fehler");
+    }catch(e){$("#canbus_raw_msg").textContent="✗ Verbindungsfehler";}
+    $("#canbus_raw_send").disabled=!$("#canbus_ack").checked;
   };
 }
 
