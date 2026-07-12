@@ -219,6 +219,13 @@ BLE_ACTIONS = {
     "keep_accessory_power_on": ("Zubehör-Stromversorgung an", ["keep-accessory-power", "on"]),
     "keep_accessory_power_off": ("Zubehör-Stromversorgung aus", ["keep-accessory-power", "off"]),
 }
+# Actuation commands (lock/unlock, trunk/frunk, climate, windows) exist in Tesla's
+# own tesla-control CLI, but were deliberately NOT added here: they'd need a
+# higher-privilege key role (e.g. "driver") than charging_manager, and that key
+# would then sit unencrypted on the stick inside the car -- a bigger theft risk
+# than the current setup. See canbus.py's write_action()/write_raw() for the
+# raw-CAN alternative used for glovebox etc. instead, which reuses this same
+# charging_manager-paired connection rather than requiring a stronger key.
 
 
 def _ble_base(name):
