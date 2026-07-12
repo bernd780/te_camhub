@@ -30,9 +30,9 @@ echo "[hub-install] installing OS packages (python3-pip, ffmpeg)"
 apt-get update -y
 apt-get install -y --no-install-recommends python3-pip ffmpeg openssl
 
-echo "[hub-install] installing python deps (pycryptodome, paho-mqtt)"
-pip3 install --break-system-packages --quiet pycryptodome paho-mqtt 2>/dev/null \
-  || pip3 install --quiet pycryptodome paho-mqtt
+echo "[hub-install] installing python deps (pycryptodome, paho-mqtt, bleak)"
+pip3 install --break-system-packages --quiet pycryptodome paho-mqtt bleak 2>/dev/null \
+  || pip3 install --quiet pycryptodome paho-mqtt bleak
 
 echo "[hub-install] copying app to $HUB_DST"
 mkdir -p "$HUB_DST"

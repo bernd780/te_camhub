@@ -18,7 +18,7 @@ from urllib.parse import urlparse, parse_qs
 from vault import Vault, VaultError
 from viewer import Viewer
 from tesla_auth import TeslaAuth
-import tesla_api, keybridge, hubconf, files as filemod, diag, nassync, mqtt_ha, eventlog, blackbox
+import tesla_api, keybridge, hubconf, files as filemod, diag, nassync, mqtt_ha, eventlog, blackbox, canbus
 
 WWW = os.path.join(os.path.dirname(os.path.abspath(__file__)), "www")
 
@@ -722,6 +722,12 @@ class H(BaseHTTPRequestHandler):
                 return self._json(200, {"ok": False, "error": str(e)[:300]})
         if path == "/api/ble/reset_unavailable":
             return self._json(200, diag.ble_reset_unavailable())
+        if path == "/api/canbus/read":
+            try:
+                dur = int(body.get("duration") or 5)
+            except (TypeError, ValueError):
+                dur = 5
+            return self._json(200, canbus.read(dur))
         if path == "/api/nas/sync_status/refresh":
             threading.Thread(target=lambda: nassync.refresh_status(CFG["scan"]), daemon=True).start()
             return self._json(200, {"ok": True})

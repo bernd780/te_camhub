@@ -77,6 +77,7 @@ function render(view){
   if(view==="files")return viewFiles(m,"");
   if(view==="diag")return viewDiag(m);
   if(view==="ble")return viewBle(m);
+  if(view==="canbus")return viewCanbus(m);
   if(view==="trips")return viewTrips(m);
   if(view==="settings")return viewSettings(m);
 }
@@ -633,6 +634,55 @@ async function viewBle(m){
     }catch(e){}
   }
   refreshBleStatus("awake","awake");
+}
+
+/* ---------------- CAN-Bus ---------------- */
+async function viewCanbus(m){
+  m.append(el("h2","title","CAN-Bus"));
+  let c;try{c=await jget("api/settings");}catch(e){c={};}
+  const box=el("div");box.innerHTML=`
+    <div class="card"><h3>OBD-Dongle</h3>
+      ${fld("Bluetooth-Adresse (MAC)","canbus_mac","text",c.canbus_mac,"z. B. 01:1D:A5:02:2C:CB")}
+      <div class="saverow"><button class="btn sm ghost" id="canbusmacsave">Adresse speichern</button><span class="note" id="canbusmacmsg"></span></div>
+      <div class="note">BLE-OBD-Dongle (z. B. UniCarScan) am OBD-Port des Autos. Der Hub verbindet sich bei Bedarf kurz per Bluetooth, liest den CAN-Bus einige Sekunden mit und trennt danach wieder &mdash; kein Dauer-Polling, kein Pairing nötig.</div>
+    </div>
+    <div class="card"><h3>Live-Werte</h3>
+      <div class="saverow">
+        <input type="number" id="canbusdur" style="width:70px" value="5" min="2" max="15"> <span class="note">Sekunden</span>
+        <button class="btn sm ghost" id="canbusread">Jetzt lesen</button><span class="note" id="canbusmsg">–</span>
+      </div>
+      <div id="canbusvals"></div>
+    </div>
+    <div class="card"><h3>Unbekannte CAN-IDs</h3>
+      <div class="note">Alles, was der Hub noch nicht kennt -- roher Inhalt der zuletzt gesehenen Nachricht je ID. Nützlich zum Muster-Suchen: z. B. während des Lesens eine Tür öffnen/schließen oder blinken und schauen, welche ID sich ändert.</div>
+      <div id="canbusunknown"></div>
+    </div>`;
+  m.append(box);
+  $("#canbusmacsave").onclick=async()=>{
+    const v=$("#canbus_mac").value.trim();
+    $("#canbusmacmsg").textContent="speichere…";
+    try{
+      const r=await jpost("api/settings",{canbus_mac:v});
+      $("#canbusmacmsg").textContent=r.ok?"✓ gespeichert":"✗ "+(r.error||"Fehler");
+    }catch(e){$("#canbusmacmsg").textContent="✗ Verbindungsfehler";}
+  };
+  $("#canbusread").onclick=async()=>{
+    $("#canbusread").disabled=true;$("#canbusmsg").textContent="verbinde & lese…";
+    const dur=parseInt($("#canbusdur").value,10)||5;
+    try{
+      const r=await jpost("api/canbus/read",{duration:dur});
+      if(!r.ok){$("#canbusmsg").textContent="✗ "+(r.error||"Fehler");$("#canbusread").disabled=false;return;}
+      $("#canbusmsg").textContent=`✓ ${r.can_ids_seen} CAN-IDs gesehen, ${Object.keys(r.values||{}).length} bekannte Werte`;
+      const entries=Object.entries(r.values||{});
+      $("#canbusvals").innerHTML=entries.length?`<table class="probe"><tbody>${entries.map(([k,v])=>
+        `<tr><td>${k}</td><td class="note">${v}</td></tr>`).join("")}</tbody></table>`:'<div class="note">keine bekannten Signale dekodiert</div>';
+      const uf=Object.entries(r.unknown_frames||{});
+      const more=(r.unknown_count||0)-uf.length;
+      $("#canbusunknown").innerHTML=uf.length?`<table class="probe"><tbody>${uf.map(([id,bytes])=>
+        `<tr><td>0x${id}</td><td class="note">${bytes}</td></tr>`).join("")}</tbody></table>${more>0?`<div class="note">… und ${more} weitere</div>`:""}`:'<div class="note">keine</div>';
+    }catch(e){$("#canbusmsg").textContent="✗ Verbindungsfehler";}
+    $("#canbusread").disabled=false;
+  };
 }
 
 /* ---------------- Fahrten & Log ---------------- */

@@ -32,6 +32,7 @@ FIELD_MAP = {
     "tessie_api_token": "TESSIE_API_TOKEN",
     "tessie_vin": "TESSIE_VIN",
     "tesla_ble_vin": "TESLA_BLE_VIN",
+    "canbus_mac": "CANBUS_MAC",
     # notifications (a common subset)
     "pushover_enabled": "PUSHOVER_ENABLED",
     "pushover_user_key": "PUSHOVER_USER_KEY",
