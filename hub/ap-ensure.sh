@@ -4,7 +4,25 @@
 # Ensures the ap0 virtual interface + TESLAUSB_AP NetworkManager profile
 # exist, mirroring teslausb's own setup/pi/configure-ap.sh (NetworkManager
 # path -- this Pi doesn't use the legacy hostapd/wpa_supplicant path).
-# Idempotent: safe to call repeatedly, e.g. every time the setting is saved.
+# Idempotent: safe to call repeatedly, e.g. every time the setting is saved
+# -- always rewrites the whole keyfile rather than diffing/patching it.
+#
+# The profile is written directly as a keyfile under
+# /etc/NetworkManager/system-connections/ and picked up via `nmcli con
+# reload`, never via `nmcli con add`/`nmcli con modify`. Two independent
+# reasons, both confirmed empirically against this Pi:
+#   1. Raspberry Pi OS's NetworkManager.conf ships `plugins=ifupdown,keyfile`;
+#      under that combination `nmcli con add`'s AddConnection D-Bus call
+#      fails with "settings plugin does not support adding connections".
+#   2. NetworkManager.service runs with ProtectSystem=true, so *any* write
+#      NetworkManager's own daemon process makes under /etc -- including
+#      what `nmcli con modify` asks it to do -- hits a read-only mount from
+#      that process's point of view, regardless of the real filesystem's
+#      rw/ro state. Only a write from a process outside that sandbox (this
+#      script, running as root via the Hub) can actually land on disk;
+#      `nmcli con reload` afterwards is a read, which NM's sandbox permits.
+# autoconnect=false is baked into the template itself so the Hub never needs
+# a separate `nmcli con modify ... autoconnect` call to (un)set it.
 
 SSID="${1:?ssid required}"
 PASS="${2:?password required}"
@@ -25,16 +43,37 @@ fi
 iw "$WLAN" set power_save off || true
 iw ap0 set power_save off || true
 
-if nmcli -t -f NAME c show | grep -qx TESLAUSB_AP; then
-  nmcli con modify TESLAUSB_AP 802-11-wireless.ssid "$SSID"
-  nmcli con modify TESLAUSB_AP 802-11-wireless-security.psk "$PASS"
-  nmcli con modify TESLAUSB_AP ipv4.addr "$IP/24"
-else
-  nmcli con add type wifi ifname ap0 mode ap con-name TESLAUSB_AP ssid "$SSID"
-  nmcli con modify TESLAUSB_AP 802-11-wireless-security.key-mgmt wpa-psk
-  nmcli con modify TESLAUSB_AP 802-11-wireless-security.psk "$PASS"
-  nmcli con modify TESLAUSB_AP ipv4.addr "$IP/24"
-  nmcli con modify TESLAUSB_AP ipv4.method shared
-  nmcli con modify TESLAUSB_AP ipv6.method disabled
+CONFFILE=/etc/NetworkManager/system-connections/TESLAUSB_AP.nmconnection
+if [ -f "$CONFFILE" ]; then
+  UUID="$(grep -m1 '^uuid=' "$CONFFILE" | cut -d= -f2-)"
 fi
+UUID="${UUID:-$(cat /proc/sys/kernel/random/uuid)}"
+
+umask 077
+cat > "$CONFFILE" <<CONNEOF
+[connection]
+id=TESLAUSB_AP
+uuid=$UUID
+type=wifi
+interface-name=ap0
+autoconnect=false
+
+[wifi]
+mode=ap
+ssid=$SSID
+
+[wifi-security]
+key-mgmt=wpa-psk
+psk=$PASS
+
+[ipv4]
+address1=$IP/24
+method=shared
+
+[ipv6]
+method=disabled
+CONNEOF
+chown root:root "$CONFFILE"
+chmod 600 "$CONFFILE"
+nmcli con reload
 echo "ap-ensure: TESLAUSB_AP ready (ssid=$SSID ip=$IP if=$WLAN)"

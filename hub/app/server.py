@@ -608,6 +608,8 @@ class H(BaseHTTPRequestHandler):
             return self._json(200, keepawake.status())
         if path == "/api/canbus/monitor/status":
             return self._json(200, canbus.monitor_status())
+        if path == "/api/ap_fallback/status":
+            return self._json(200, diag.ap_fallback_status())
         if path == "/api/nas/raw_keys/pairing":
             return self._json(200, nassync.pairing_status(CFG["state"]))
         if path == "/api/ble/commands":
@@ -721,8 +723,17 @@ class H(BaseHTTPRequestHandler):
             if ok and "ap_fallback_only" in body:
                 enabled = str(body.get("ap_fallback_only")) in ("true", "True", "1", "on")
                 cur = hubconf.read_settings()
+                # ap_pass is a SECRETS field: the frontend omits it from the request
+                # whenever the user leaves the (masked) password box untouched -- which
+                # is the normal case when this save is just toggling the checkbox after
+                # SSID/password were already saved earlier. Falling back to the stored
+                # value (server-side only, never echoed to the client) instead of
+                # treating "not in this request" as "no password" -- otherwise
+                # apply_ap_fallback() sees password=None on first enable, can't create
+                # the TESLAUSB_AP profile, and the fallback silently never activates.
+                pw = body.get("ap_pass") or hubconf.getval("AP_PASS") or None
                 apr = diag.apply_ap_fallback(enabled, ssid=cur.get("ap_ssid"),
-                                              password=body.get("ap_pass") or None, ap_ip=cur.get("ap_ip"))
+                                              password=pw, ap_ip=cur.get("ap_ip"))
                 if not apr.get("ok"):
                     ok = False
                     err = apr.get("error")
@@ -866,9 +877,29 @@ def _redirect80():
     class R(BaseHTTPRequestHandler):
         def log_message(self, *a): pass
         def do_GET(self):
-            host = (self.headers.get("Host", "") or "").split(":")[0]
-            self.send_response(301)
-            self.send_header("Location", f"https://{host}{self.path}")
+            # Fallback-AP-Landingpage: Clients, die über die AP-eigene IP
+            # verbunden sind (kein echtes Internet dahinter), zur eigenen
+            # AP-IP umleiten statt den vom Client mitgeschickten Host zu
+            # reflektieren -- sonst laufen iOS/Android-Captive-Portal-Checks
+            # (die eine externe URL wie captive.apple.com anfragen) ins
+            # Leere, und das Betriebssystem öffnet nie den
+            # "Bei Netzwerk anmelden"-Dialog. Jede vom erwarteten Ergebnis
+            # abweichende Antwort auf diese Probe-Requests reicht dafür.
+            # Normales Heim-WLAN/-Netz (andere lokale IP) bleibt unverändert:
+            # dort wird weiterhin der angefragte Host reflektiert.
+            try:
+                local_ip = self.connection.getsockname()[0]
+            except Exception:
+                local_ip = ""
+            ap_ip = (hubconf.getval("AP_IP") or "192.168.66.1").strip()
+            if local_ip == ap_ip:
+                target = f"https://{ap_ip}/"
+            else:
+                host = (self.headers.get("Host", "") or "").split(":")[0]
+                target = f"https://{host}{self.path}"
+            self.send_response(302 if local_ip == ap_ip else 301)
+            self.send_header("Location", target)
+            self.send_header("Content-Length", "0")
             self.end_headers()
         do_POST = do_GET
     try:

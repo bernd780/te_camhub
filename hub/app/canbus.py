@@ -201,6 +201,18 @@ _TRANSIENT_MARKERS = ("no bluetooth adapters found", "service discovery has not 
 _MAX_ATTEMPTS = 3
 
 
+def _friendly_ble_error(msg):
+    """'Device with address <mac> was not found.' (bleak, wenn der Dongle beim
+    Verbinden nicht (mehr) sichtbar ist) klingt wie ein Programmfehler, ist
+    hier aber praktisch immer: Dongle nicht im OBD-Port, oder Auto schläft
+    (der Port hat dann keinen Strom, der Dongle sendet nichts) -- dieselbe
+    Ursache wie beim "keine CAN-Frames empfangen"-Fall unten, nur schon beim
+    Verbindungsaufbau statt erst beim Lesen."""
+    if "was not found" in msg.lower():
+        return "Dongle nicht gefunden -- steckt er im OBD-Port? Auto wach (Port hat nur dann Strom)?"
+    return msg[:200]
+
+
 def read(duration=5):
     """Verbindet sich mit dem Dongle, liest `duration` Sekunden CAN-Traffic,
     dekodiert bekannte Tesla-Frames, trennt wieder."""
@@ -218,7 +230,7 @@ def read(duration=5):
                 if attempt < _MAX_ATTEMPTS - 1 and any(m in msg.lower() for m in _TRANSIENT_MARKERS):
                     time.sleep(2)
                     continue
-                return {"ok": False, "error": msg[:200]}
+                return {"ok": False, "error": _friendly_ble_error(msg)}
     values, seen_ids, unknown = _parse_frames(raw)
     if not seen_ids:
         return {"ok": False, "error": "keine CAN-Frames empfangen (Dongle in Reichweite? Auto wach?)"}
@@ -263,7 +275,7 @@ def _monitor_loop():
                     if attempt < _MAX_ATTEMPTS - 1 and any(m in msg.lower() for m in _TRANSIENT_MARKERS):
                         time.sleep(2)
                         continue
-                    err = msg[:200]
+                    err = _friendly_ble_error(msg)
         with _monitor_lock:
             _monitor_state["cycles"] += 1
             _monitor_state["last_update"] = time.time()
@@ -397,7 +409,7 @@ def _write(can_id, data, confirm):
                 if attempt < _MAX_ATTEMPTS - 1 and any(m in msg.lower() for m in _TRANSIENT_MARKERS):
                     time.sleep(2)
                     continue
-                return {"ok": False, "error": msg[:200]}
+                return {"ok": False, "error": _friendly_ble_error(msg)}
     return {"ok": True, "can_id": f"{can_id:03X}", "data": data.hex().upper(),
             "dongle_response": resp[:200]}
 

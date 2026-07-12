@@ -911,8 +911,16 @@ async function viewSettings(m){
       ${fld("WLAN-Passwort","s_wifipass","password","",c.wifipass_set?"•••• unverändert":"")}
       ${fld("Access-Point SSID","s_ap_ssid","text",c.ap_ssid)}
       ${fld("Access-Point Passwort","s_ap_pass","password","",c.ap_pass_set?"•••• unverändert":"")}
-      ${chk("Access Point nur als Fallback (nur aktiv, wenn Heim-WLAN nicht erreichbar ist)","s_ap_fallback_only",c.ap_fallback_only==='true')}
-      <div class="note">Ohne Häkchen läuft der Access Point wie gewohnt dauerhaft parallel zum Heim-WLAN. Mit Häkchen wird er nur eingeschaltet, wenn das Heim-WLAN gerade nicht erreichbar ist (Prüfung alle 30s). Access-Point-SSID und -Passwort müssen dafür gesetzt sein.</div>
+      <div class="note">SSID/Passwort hier oben eintragen und mit dem großen "Speichern" unten sichern, bevor der Fallback unten eingeschaltet wird.</div>
+    </div>
+    <div class="card"><h3>Access-Point-Fallback</h3>
+      <div class="note">Aus: Access Point läuft wie gewohnt dauerhaft parallel zum Heim-WLAN. An: nur eingeschaltet, wenn das Heim-WLAN gerade nicht erreichbar ist (Prüfung alle 30s), sonst aus.</div>
+      <div class="saverow"><span class="note" id="apfallback_status">lädt…</span></div>
+      <div class="saverow">
+        <button class="btn sm" id="apfallback_on">Einschalten</button>
+        <button class="btn sm ghost" id="apfallback_off" style="display:none">Ausschalten</button>
+      </div>
+      <div class="note warn">⚠ Auf diesem Pi kann gleichzeitiger AP+WLAN-Betrieb die WLAN-Verbindung kurz stören (Chip-Limitierung, beim Testen beobachtet). Vor Verlassen des Hauses einmal in Ruhe testen, nicht blind verlassen.</div>
     </div>
     <div class="card"><h3>Auto wachhalten</h3>
       ${fld("TeslaFi API-Token","s_teslafi_api_token","password","",c.teslafi_api_token_set?"•••• gesetzt":"")}
@@ -1066,7 +1074,7 @@ async function viewSettings(m){
     const secrets=["share_password","wifipass","ap_pass","teslafi_api_token","tessie_api_token",
       "pushover_user_key","pushover_app_key","telegram_bot_token","mqtt_password"];
     const bools=["archive_recentclips","archive_savedclips","archive_sentryclips","sync_all_content",
-      "ssh_disable_password","pushover_enabled","telegram_enabled","ap_fallback_only","mqtt_enabled","nas_raw_keys"];
+      "ssh_disable_password","pushover_enabled","telegram_enabled","mqtt_enabled","nas_raw_keys"];
     const body={};
     fields.forEach(f=>body[f]=($("#s_"+f)||{}).value||"");
     secrets.forEach(f=>{const v=($("#s_"+f)||{}).value;if(v)body[f]=v;});
@@ -1077,6 +1085,42 @@ async function viewSettings(m){
     $("#savemsg").textContent=r.ok?"✓ gespeichert (greift nach Archiv-Neustart/Reboot)":"✗ "+(r.error||"Fehler");
     if(r.ok)toast("Gespeichert");
   };
+  async function refreshApFallback(){
+    const statusEl=$("#apfallback_status");
+    if(!statusEl)return;
+    let r;try{r=await jget("api/ap_fallback/status");}catch(e){setTimeout(refreshApFallback,15000);return;}
+    const onBtn=$("#apfallback_on"),offBtn=$("#apfallback_off");
+    if(r.enabled){
+      onBtn.style.display="none";offBtn.style.display="";
+      statusEl.textContent=r.ap_broadcasting?"aktiv -- AP sendet gerade (Heim-WLAN nicht erreichbar)":
+        r.home_wifi_connected?"bereit (Heim-WLAN verbunden)":"bereit (Heim-WLAN-Status unklar)";
+    }else{
+      onBtn.style.display="";offBtn.style.display="none";
+      statusEl.textContent="aus";
+    }
+    if(document.body.contains(statusEl))setTimeout(refreshApFallback,15000);
+  }
+  $("#apfallback_on").onclick=async()=>{
+    $("#apfallback_on").disabled=true;
+    $("#apfallback_status").textContent="schalte ein…";
+    try{
+      const r=await jpost("api/settings",{ap_fallback_only:true});
+      if(!r.ok)$("#apfallback_status").textContent="✗ "+(r.error||"Fehler");
+    }catch(e){$("#apfallback_status").textContent="✗ Verbindungsfehler";}
+    $("#apfallback_on").disabled=false;
+    refreshApFallback();
+  };
+  $("#apfallback_off").onclick=async()=>{
+    $("#apfallback_off").disabled=true;
+    $("#apfallback_status").textContent="schalte aus…";
+    try{
+      const r=await jpost("api/settings",{ap_fallback_only:false});
+      if(!r.ok)$("#apfallback_status").textContent="✗ "+(r.error||"Fehler");
+    }catch(e){$("#apfallback_status").textContent="✗ Verbindungsfehler";}
+    $("#apfallback_off").disabled=false;
+    refreshApFallback();
+  };
+  refreshApFallback();
 }
 
 boot();
