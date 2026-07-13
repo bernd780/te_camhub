@@ -116,12 +116,19 @@ fi
 
 echo "[hub-install] ensuring SMB/Samba share of TeslaCam (Einstellungen -> SMB-Freigabe; on by default)"
 if [ -f "$CONF" ] && [ "$(getconf_val SAMBA_ENABLED)" != "false" ]; then
+  # Snapshot BEFORE running configure-samba.sh: its own first-install branch
+  # already creates a 'pi' Samba account with the insecure default password
+  # "raspberry" (see setup/pi/configure-samba.sh). Checking pdbedit *after*
+  # running it would always find that entry and skip generating a real
+  # password -- this must key off whether smbd existed beforehand instead.
+  FIRST_SAMBA_INSTALL=false
+  hash smbd 2>/dev/null || FIRST_SAMBA_INSTALL=true
   SAMBA_GUEST=false bash "$HUB_SRC/../setup/pi/configure-samba.sh"
   systemctl enable --now smbd nmbd 2>/dev/null || true
-  if ! pdbedit -L 2>/dev/null | grep -q '^pi:'; then
+  if [ "$FIRST_SAMBA_INSTALL" = "true" ]; then
     GENPW="$(tr -dc 'A-Za-z0-9' < /dev/urandom | head -c16)"
     printf '%s\n%s\n' "$GENPW" "$GENPW" | smbpasswd -s -a pi >/dev/null 2>&1
-    echo "[hub-install] generated SMB password for user 'pi': $GENPW"
+    echo "[hub-install] generated SMB password for user 'pi' (overriding the script's insecure 'raspberry' default): $GENPW"
     echo "[hub-install]   change it any time in Einstellungen -> SMB-Freigabe"
   fi
 else
