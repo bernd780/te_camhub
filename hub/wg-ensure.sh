@@ -20,7 +20,13 @@
 # apply_wireguard) does that after this script returns.
 
 PEER_PUBKEY="" ENDPOINT="" ALLOWED_IPS="0.0.0.0/0" ADDRESS="" KEEPALIVE="25" PSK="" PRIVKEY="" DNS=""
-while IFS='=' read -r key val || [ -n "$key" ]; do
+while IFS= read -r line || [ -n "$line" ]; do
+  # Split on the FIRST '=' only -- IFS='=' read with multiple '=' in the
+  # value (e.g. base64 padding on a WireGuard key: "...fX8=") drops the
+  # trailing delimiter+empty-field instead of keeping it as part of the
+  # last variable, silently truncating the key by its padding character.
+  key="${line%%=*}"
+  val="${line#*=}"
   case "$key" in
     PEER_PUBKEY) PEER_PUBKEY="$val" ;;
     ENDPOINT) ENDPOINT="$val" ;;

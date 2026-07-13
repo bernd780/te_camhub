@@ -578,7 +578,10 @@ def _parse_wg_config(text):
             elif key == "address":
                 out["address"] = val
             elif key == "dns":
-                out["dns"] = val
+                # A wg-quick config may list DNS twice (e.g. one line for
+                # IPv4 servers, one for IPv6) -- accumulate instead of
+                # overwriting, or the first line silently gets dropped.
+                out["dns"] = (out["dns"] + "," + val) if out.get("dns") else val
         elif section == "peer":
             if key == "publickey":
                 out["peer_pubkey"] = val
