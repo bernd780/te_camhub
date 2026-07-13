@@ -3,7 +3,7 @@ Diagnostics/actions for the Hub: system status, log tails, reboot, drive toggle,
 sync/retention/BLE triggers. Thin wrappers over the existing teslausb scripts and
 standard tools (the Hub runs as root via systemd).
 """
-import os, subprocess, urllib.request, tarfile, io, json, time, threading
+import os, subprocess, urllib.request, tarfile, io, json, time, threading, base64
 import hubconf
 
 # The Pi has exactly one Bluetooth adapter; two tesla-control invocations
@@ -486,6 +486,188 @@ def ap_fallback_status():
             "home_wifi_connected": any(d != "ap0" for d in active_wifi_devices)}
 
 
+def apply_hotspot_wifi(enabled, ssid=None, password=None):
+    """Toggle the phone-hotspot WiFi client profile (TESLAUSB_HOTSPOT).
+    Enabling (re)writes the NetworkManager keyfile via hotspot-ensure.sh
+    with autoconnect on at a lower priority than home WiFi (see that
+    script's header), so the Pi only falls back to the hotspot when home
+    WiFi isn't in range. Disabling just deletes the profile."""
+    subprocess.run(["mount", "/", "-o", "remount,rw"], capture_output=True)
+    try:
+        if enabled:
+            if not (ssid and password):
+                return {"ok": False, "error": "zuerst Hotspot-SSID und -Passwort eintragen und speichern"}
+            r = subprocess.run(["bash", "/opt/teslacam-hub/hotspot-ensure.sh", ssid, password],
+                                capture_output=True, text=True, timeout=30)
+            if r.returncode != 0:
+                return {"ok": False, "error": (r.stderr or "Hotspot-Einrichtung fehlgeschlagen").strip()[:200]}
+        else:
+            subprocess.run(["nmcli", "con", "delete", "TESLAUSB_HOTSPOT"], capture_output=True)
+        return {"ok": True}
+    finally:
+        subprocess.run(["mount", "/", "-o", "remount,ro"], capture_output=True)
+
+
+def hotspot_wifi_status():
+    """Live status for the settings toggle: whether the profile exists and
+    whether it's the one currently providing the active connection."""
+    r = subprocess.run(["nmcli", "-t", "-f", "NAME", "c", "show"], capture_output=True, text=True)
+    profile_exists = "TESLAUSB_HOTSPOT" in (r.stdout or "").splitlines()
+    r2 = subprocess.run(["nmcli", "-t", "-f", "NAME", "c", "show", "--active"], capture_output=True, text=True)
+    connected_now = "TESLAUSB_HOTSPOT" in (r2.stdout or "").splitlines()
+    return {"enabled": hubconf.getval("HOTSPOT_ENABLED") == "true",
+            "profile_exists": profile_exists, "connected_now": connected_now}
+
+
+def apply_wireguard(enabled, peer_pubkey=None, endpoint=None, allowed_ips=None,
+                     address=None, keepalive=None, psk=None, privkey=None, dns=None):
+    """Toggle the home WireGuard tunnel (wg0). Enabling (re)writes
+    /etc/wireguard/wg0.conf via wg-ensure.sh -- passing settings as
+    KEY=VALUE lines on stdin rather than argv, since privkey/psk can come
+    from an imported QR code and stdin keeps secrets off the process list
+    (see that script's header). If privkey is omitted, wg-ensure.sh keeps
+    this Pi's own previously-generated key (generating one on first run)
+    -- so a QR import that includes a private key from the home server
+    takes priority over that self-generated one. Then (re)starts
+    wg-quick@wg0 so a changed config takes effect immediately rather than
+    only after the next reboot."""
+    if not enabled:
+        subprocess.run(["systemctl", "disable", "--now", "wg-quick@wg0"], capture_output=True)
+        return {"ok": True}
+    if not (peer_pubkey and endpoint and address):
+        return {"ok": False, "error": "Peer-Public-Key, Endpoint und Tunnel-Adresse werden benötigt"}
+    stdin = "".join(f"{k}={v}\n" for k, v in [
+        ("PEER_PUBKEY", peer_pubkey), ("ENDPOINT", endpoint),
+        ("ALLOWED_IPS", allowed_ips or "0.0.0.0/0"), ("ADDRESS", address),
+        ("KEEPALIVE", keepalive or 25), ("PSK", psk or ""),
+        ("PRIVKEY", privkey or ""), ("DNS", dns or ""),
+    ])
+    subprocess.run(["mount", "/", "-o", "remount,rw"], capture_output=True)
+    try:
+        r = subprocess.run(["bash", "/opt/teslacam-hub/wg-ensure.sh"], input=stdin,
+                            capture_output=True, text=True, timeout=30)
+        if r.returncode != 0:
+            return {"ok": False, "error": (r.stderr or "WireGuard-Einrichtung fehlgeschlagen").strip()[:200]}
+    finally:
+        subprocess.run(["mount", "/", "-o", "remount,ro"], capture_output=True)
+    subprocess.run(["systemctl", "enable", "wg-quick@wg0"], capture_output=True)
+    subprocess.run(["systemctl", "restart", "wg-quick@wg0"], capture_output=True)
+    return {"ok": True}
+
+
+def _parse_wg_config(text):
+    """Parse a wg-quick-style config -- the plain text a WireGuard QR code
+    (or an app's 'export config' feature) encodes -- into the flat fields
+    this Hub's settings use."""
+    section = None
+    out = {}
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            section = line[1:-1].strip().lower()
+            continue
+        if "=" not in line:
+            continue
+        key, val = line.split("=", 1)
+        key, val = key.strip().lower(), val.strip()
+        if section == "interface":
+            if key == "privatekey":
+                out["privkey"] = val
+            elif key == "address":
+                out["address"] = val
+            elif key == "dns":
+                out["dns"] = val
+        elif section == "peer":
+            if key == "publickey":
+                out["peer_pubkey"] = val
+            elif key == "endpoint":
+                out["endpoint"] = val
+            elif key == "allowedips":
+                out["allowed_ips"] = val
+            elif key == "presharedkey":
+                out["psk"] = val
+            elif key == "persistentkeepalive":
+                out["keepalive"] = val
+    return out
+
+
+def import_wg_qr(image_b64):
+    """Decode an uploaded image (base64) as a WireGuard QR code via
+    pyzbar/Pillow (packages python3-pyzbar, python3-pil, libzbar0 --
+    installed by hub/install.sh) and parse the embedded wg-quick config.
+    Deliberately not the zbarimg CLI (package zbar-tools): that drags in
+    the full ImageMagick/libmagickwand stack just to load the image, which
+    is enough to exhaust a Pi's small root partition (hit exactly that
+    during development) -- pyzbar+Pillow decode the same QR with a much
+    smaller dependency footprint. Returns the parsed fields for the UI to
+    prefill -- doesn't write/apply anything itself, same as the rest of
+    the settings form (review, then the big 'Speichern' button saves)."""
+    try:
+        raw = base64.b64decode(image_b64, validate=True)
+    except Exception:
+        return {"ok": False, "error": "ungültige Bilddaten"}
+    if not raw:
+        return {"ok": False, "error": "kein Bild empfangen"}
+    if len(raw) > 8 * 1024 * 1024:
+        return {"ok": False, "error": "Bild zu groß (max. 8 MB)"}
+    try:
+        from pyzbar.pyzbar import decode as zbar_decode
+        from PIL import Image
+    except ImportError:
+        return {"ok": False, "error": "QR-Decoder nicht installiert -- hub/install.sh erneut ausführen"}
+    try:
+        img = Image.open(io.BytesIO(raw))
+        img.load()
+    except Exception:
+        return {"ok": False, "error": "Datei ist kein lesbares Bild"}
+    try:
+        results = zbar_decode(img)
+    except Exception as e:
+        return {"ok": False, "error": f"QR-Decoder-Fehler: {str(e)[:150]}"}
+    if not results:
+        return {"ok": False, "error": "Kein QR-Code im Bild gefunden"}
+    text = results[0].data.decode("utf-8", errors="replace")
+    parsed = _parse_wg_config(text)
+    if not (parsed.get("peer_pubkey") and parsed.get("endpoint")):
+        return {"ok": False, "error": "QR-Code enthält keine gültige WireGuard-Konfiguration"}
+    return {"ok": True, "config": parsed}
+
+
+def wireguard_status():
+    """Live status for the settings toggle: service state, this Pi's own
+    public key (to paste into the home server's peer config), and --
+    parsed from `wg show ... dump` -- the last handshake age and transfer
+    counters so the UI can show something better than just 'active'."""
+    enabled = hubconf.getval("WG_ENABLED") == "true"
+    active = _svc_active("wg-quick@wg0")
+    own_pubkey = ""
+    try:
+        with open("/etc/wireguard/publickey", encoding="utf-8") as f:
+            own_pubkey = f.read().strip()
+    except Exception:
+        pass
+    handshake, transfer = "", ""
+    r = _run(["wg", "show", "wg0", "dump"])
+    if r and r.returncode == 0 and r.stdout:
+        lines = r.stdout.strip().splitlines()
+        if len(lines) >= 2:
+            parts = lines[1].split("\t")
+            if len(parts) >= 7:
+                try:
+                    latest_hs = int(parts[4] or 0)
+                    if latest_hs:
+                        age = max(0, int(time.time()) - latest_hs)
+                        handshake = f"vor {age}s" if age < 120 else f"vor {age // 60} min"
+                    rx, tx = int(parts[5]), int(parts[6])
+                    transfer = f"↓{rx // 1024} KiB / ↑{tx // 1024} KiB"
+                except ValueError:
+                    pass
+    return {"enabled": enabled, "active": active, "own_pubkey": own_pubkey,
+            "handshake": handshake, "transfer": transfer}
+
+
 def set_ssh_password(password):
     """Set/reset the Linux login password for the 'pi' user -- the SSH
     login used throughout setup and by this Hub's own deploy workflow.
@@ -519,4 +701,63 @@ def apply_ssh(disable):
     subprocess.run(["mount", "/", "-o", "remount,ro"], capture_output=True)
     subprocess.run(["systemctl", "reload", "ssh"], capture_output=True) or \
         subprocess.run(["systemctl", "reload", "sshd"], capture_output=True)
+    return {"ok": True}
+
+
+def _has_smbd():
+    return subprocess.run(["bash", "-c", "hash smbd 2>/dev/null"]).returncode == 0
+
+
+def samba_status():
+    """Live status for the settings toggle: package present, service active,
+    and the UNC path to show the user once it's up."""
+    return {"installed": _has_smbd(), "active": _svc_active("smbd"),
+            "share": r"\\%s\TeslaCam" % (hubconf.getval("TESLAUSB_HOSTNAME") or "teslausb")}
+
+
+def apply_samba(enabled):
+    """Toggle the read-only SMB export of TeslaCam. The package itself and
+    the 'pi' Samba account are provisioned once by hub/install.sh (default
+    on, random password generated there if none exists yet) -- this only
+    flips smbd/nmbd on or off, so it stays fast enough for a synchronous
+    settings-save request. If the package was never installed (e.g. an old
+    Hub build never re-ran install.sh), tell the user instead of silently
+    no-op'ing.
+
+    systemctl enable/disable write unit symlinks under
+    /etc/systemd/system/, which lives on the normally-read-only root fs --
+    bracket in a remount like apply_ssh()/apply_ap_fallback() do, or
+    "disable" silently no-ops (start/stop alone don't need this)."""
+    if not enabled:
+        subprocess.run(["mount", "/", "-o", "remount,rw"], capture_output=True)
+        try:
+            subprocess.run(["systemctl", "disable", "--now", "smbd", "nmbd"], capture_output=True)
+        finally:
+            subprocess.run(["mount", "/", "-o", "remount,ro"], capture_output=True)
+        return {"ok": True}
+    if not _has_smbd():
+        return {"ok": False, "error": "Samba ist nicht installiert -- hub/install.sh erneut ausführen"}
+    subprocess.run(["mount", "/", "-o", "remount,rw"], capture_output=True)
+    try:
+        subprocess.run(["systemctl", "enable", "--now", "smbd", "nmbd"], capture_output=True)
+    finally:
+        subprocess.run(["mount", "/", "-o", "remount,ro"], capture_output=True)
+    return {"ok": True}
+
+
+def set_samba_password(password):
+    """Set/reset the SMB login for the 'pi' Samba account (separate from
+    both the vault passphrase and the Linux/SSH password -- same reasoning
+    as set_ssh_password: independent secrets, no risk of one reset locking
+    out another). Samba's passdb lives under /mutable (see
+    setup/pi/configure-samba.sh), so unlike set_ssh_password this needs no
+    root-fs remount."""
+    if not password or len(password) < 8:
+        return {"ok": False, "error": "Passwort muss mindestens 8 Zeichen haben"}
+    if not _has_smbd():
+        return {"ok": False, "error": "Samba ist nicht installiert -- hub/install.sh erneut ausführen"}
+    r = subprocess.run(["smbpasswd", "-s", "-a", "pi"], input=f"{password}\n{password}\n",
+                        text=True, capture_output=True, timeout=10)
+    if r.returncode != 0:
+        return {"ok": False, "error": (r.stderr or "smbpasswd fehlgeschlagen").strip()[:200]}
     return {"ok": True}

@@ -125,10 +125,12 @@ def to_gpx(trip_id):
         f"  <trk><name>{name}</name><trkseg>",
     ]
     for p in points:
-        ts = p["ts"]
+        lat, lon, ts = p.get("lat"), p.get("lon"), p.get("ts")
+        if lat is None or lon is None or not ts:
+            continue  # tolerate malformed/legacy point rows instead of failing the whole export
         if "T" in ts and not ts.endswith("Z"):
             ts = ts + "Z" if len(ts) <= 19 else ts
-        parts.append(f'    <trkpt lat="{p["lat"]}" lon="{p["lon"]}"><time>{ts}</time></trkpt>')
+        parts.append(f'    <trkpt lat="{lat}" lon="{lon}"><time>{ts}</time></trkpt>')
     parts.append("  </trkseg></trk>")
     parts.append("</gpx>")
     return "\n".join(parts)

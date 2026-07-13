@@ -27,6 +27,18 @@ FIELD_MAP = {
     "ap_pass": "AP_PASS",
     "ap_ip": "AP_IP",
     "ap_fallback_only": "AP_FALLBACK_ONLY",
+    "hotspot_ssid": "HOTSPOT_SSID",
+    "hotspot_pass": "HOTSPOT_PASS",
+    "hotspot_enabled": "HOTSPOT_ENABLED",
+    "wg_enabled": "WG_ENABLED",
+    "wg_peer_pubkey": "WG_PEER_PUBKEY",
+    "wg_endpoint": "WG_ENDPOINT",
+    "wg_allowed_ips": "WG_ALLOWED_IPS",
+    "wg_address": "WG_ADDRESS",
+    "wg_keepalive": "WG_KEEPALIVE",
+    "wg_psk": "WG_PSK",
+    "wg_privkey": "WG_PRIVKEY",
+    "wg_dns": "WG_DNS",
     # keep-awake
     "teslafi_api_token": "TESLAFI_API_TOKEN",
     "tessie_api_token": "TESSIE_API_TOKEN",
@@ -62,15 +74,18 @@ FIELD_MAP = {
     "vault_autolock_min": "VAULT_AUTOLOCK_MIN",
     "ssh_disable_password": "SSH_DISABLE_PASSWORD",
     "viewer_extra_roots": "VIEWER_EXTRA_ROOTS",
+    "samba_enabled": "SAMBA_ENABLED",
 }
 BOOLS = {"archive_recentclips", "archive_savedclips", "archive_sentryclips",
          "archive_trackmodeclips", "pushover_enabled", "telegram_enabled", "ap_fallback_only",
-         "sync_all_content", "ssh_disable_password", "mqtt_enabled", "nas_raw_keys", "blackbox_enabled"}
+         "sync_all_content", "ssh_disable_password", "mqtt_enabled", "nas_raw_keys", "blackbox_enabled",
+         "samba_enabled", "hotspot_enabled", "wg_enabled"}
 INTS = {"snapshot_interval", "archive_delay", "retention_days",
-        "retention_free_gb", "vault_autolock_min", "mqtt_port"}
+        "retention_free_gb", "vault_autolock_min", "mqtt_port", "wg_keepalive"}
 SECRETS = {"share_password", "wifipass", "ap_pass", "teslafi_api_token",
            "tessie_api_token", "pushover_user_key", "pushover_app_key",
-           "telegram_bot_token", "mqtt_password"}  # returned only as *_set, never in clear
+           "telegram_bot_token", "mqtt_password", "hotspot_pass",
+           "wg_psk", "wg_privkey"}  # returned only as *_set, never in clear
 
 
 def getval(name):
@@ -149,6 +164,28 @@ def write_settings(values: dict):
         tmp = CONF + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             f.writelines(lines)
+        os.replace(tmp, CONF)
+    finally:
+        subprocess.run(["mount", "/", "-o", "remount,ro"], capture_output=True)
+    return True, None
+
+
+def import_conf(text):
+    """Restore /root/teslausb_setup_variables.conf verbatim from a prior
+    export (GET /api/backup/export) -- the safety net for migrations like
+    reflashing the stick with a bigger root partition: export before,
+    import after, instead of retyping every field by hand, including
+    secrets the regular Settings UI deliberately never echoes back
+    (SECRETS are masked to *_set in read_settings()). Minimal sanity
+    check only -- this is a trusted admin action, not attacker input --
+    just enough to stop an obviously-wrong file from wiping the config."""
+    if not text or "export " not in text:
+        return False, "Datei sieht nicht wie eine gültige teslausb-Konfiguration aus"
+    subprocess.run(["mount", "/", "-o", "remount,rw"], capture_output=True)
+    try:
+        tmp = CONF + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(text)
         os.replace(tmp, CONF)
     finally:
         subprocess.run(["mount", "/", "-o", "remount,ro"], capture_output=True)

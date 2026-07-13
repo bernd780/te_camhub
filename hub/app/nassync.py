@@ -36,6 +36,10 @@ Camera-clip-observing jobs, both driven by nas_sync_loop() in server.py:
     misconfigured/pointed elsewhere after the fact -- the whole point of
     offering this weaker mode is that it should only ever talk to the one
     NAS it was explicitly paired with.
+  - push_key_sidecars_local(): local counterpart of push_key_sidecars(),
+    for the Pi's own [TeslaCam] Samba export instead of a remote NAS --
+    called every 60s from key_fetch_loop() in server.py, not
+    nas_sync_loop(), since it needs no NAS configured at all.
 """
 import os, re, json, time, base64, secrets, datetime, subprocess, tempfile, threading
 import hubconf
@@ -58,6 +62,7 @@ _media_cache = {"t": 0.0, "ok": None, "error": None, "copied": 0}
 
 MEDIA_ROOTS = ("Music", "LightShow", "Boombox")
 FS_BASE = "/var/www/html/fs"
+LOCAL_TESLACAM = "/mutable/TeslaCam"   # served read-only over SMB, see setup/pi/configure-samba.sh
 
 
 def _mount(mnt, rw):
@@ -305,6 +310,72 @@ def push_key_sidecars(scan_dir, vault):
     finally:
         _umount(mnt)
         _op_lock.release()
+    return {"ok": not errors, "written": written, "errors": errors}
+
+
+def push_key_sidecars_local(vault):
+    """Same idea as push_key_sidecars() above, but for the Pi's own local
+    Samba export (LOCAL_TESLACAM, the [TeslaCam] share from
+    setup/pi/configure-samba.sh) instead of a remote NAS -- so a plain SMB
+    client (Windows Explorer, etc. connecting straight to the Pi, no NAS
+    needed) sees the sealed key file right next to each video.
+
+    Matches by basename rather than by the vault's EncryptedClips-relative
+    id: teslausb's own make_snapshot.sh (see run/make_snapshot.sh) links
+    each clip into LOCAL_TESLACAM via symlinks in potentially *multiple*
+    places (RecentClips/<date>, and again into SavedClips/<event> or
+    SentryClips/<event> for flagged clips) rather than mirroring
+    EncryptedClips' own relative paths 1:1 -- basename matching (each
+    clip+camera timestamp is unique) is the only layout-independent way to
+    find every location a given video's symlink actually appears in, and
+    writes a sidecar in each one."""
+    if not vault.is_unlocked():
+        return {"ok": False, "error": "vault locked"}
+    keys = vault.keys()
+    if not keys:
+        return {"ok": True, "written": 0}
+    if not os.path.isdir(LOCAL_TESLACAM):
+        return {"ok": True, "written": 0}
+    by_basename = {}
+    for cid, fek_b64 in keys.items():
+        by_basename.setdefault(os.path.basename(cid), (cid, fek_b64))
+
+    readme = os.path.join(LOCAL_TESLACAM, README_NAME)
+    if not os.path.isfile(readme):
+        try:
+            with open(readme, "w", encoding="utf-8") as f:
+                f.write(README_TEXT)
+        except Exception:
+            pass
+
+    written, errors = 0, []
+    for root, _dirs, names in os.walk(LOCAL_TESLACAM):
+        for nm in names:
+            if not nm.endswith(".mp4"):
+                continue
+            match = by_basename.get(nm)
+            if not match:
+                continue
+            sidecar = os.path.join(root, nm) + ".key.json"
+            if os.path.isfile(sidecar):
+                continue
+            cid, fek_b64 = match
+            try:
+                sealed = vault.seal(base64.b64decode(fek_b64))
+                payload = json.dumps({
+                    "video": nm,
+                    "for_file": cid,
+                    "algo": "AES-256-GCM (TeslaCam Hub vault)",
+                    "created": datetime.datetime.utcnow().isoformat() + "Z",
+                    "key_sealed_b64": base64.b64encode(sealed).decode("ascii"),
+                }, indent=2)
+                tmp = sidecar + ".tmp"
+                with open(tmp, "w", encoding="utf-8") as f:
+                    f.write(payload)
+                os.replace(tmp, sidecar)
+                written += 1
+            except Exception as e:
+                errors.append(f"{nm}: {e}")
     return {"ok": not errors, "written": written, "errors": errors}
 
 

@@ -78,23 +78,32 @@ def autolock_loop():
 
 
 def key_fetch_loop():
-    """Fetch missing FEKs from Tesla once each into the vault (unlocked only)."""
+    """Fetch missing FEKs from Tesla once each into the vault (unlocked
+    only), then mirror every currently-known key onto the Pi's own local
+    TeslaCam Samba export as a sealed sidecar (see
+    nassync.push_key_sidecars_local) -- independent of whether a NAS is
+    configured, since that's a separate/optional destination
+    (nas_sync_loop's push_key_sidecars targets the NAS, not this)."""
     while True:
         time.sleep(60)
         try:
-            if VAULT.is_unlocked() and AUTH.get_access_token():
-                items = keybridge.scan_items(CFG["src"], VAULT.keys())
-                if items:
-                    got = 0
-                    for i in range(0, len(items), 30):
-                        try:
-                            res = tesla_api.fetch_keys(items[i:i + 30], AUTH.get_access_token())
-                        except tesla_api.DecryptApiError:
-                            break
-                        got += VAULT.merge_keys(res)
-                    if got:
-                        VIEWER.invalidate()
-                        print(f"[hub] fetched {got} new keys", flush=True)
+            if VAULT.is_unlocked():
+                if AUTH.get_access_token():
+                    items = keybridge.scan_items(CFG["src"], VAULT.keys())
+                    if items:
+                        got = 0
+                        for i in range(0, len(items), 30):
+                            try:
+                                res = tesla_api.fetch_keys(items[i:i + 30], AUTH.get_access_token())
+                            except tesla_api.DecryptApiError:
+                                break
+                            got += VAULT.merge_keys(res)
+                        if got:
+                            VIEWER.invalidate()
+                            print(f"[hub] fetched {got} new keys", flush=True)
+                r = nassync.push_key_sidecars_local(VAULT)
+                if r.get("written"):
+                    print(f"[hub] local key sidecars: {r['written']} neu geschrieben", flush=True)
         except Exception as e:
             print("[hub] key fetch:", e, flush=True)
 
@@ -610,6 +619,17 @@ class H(BaseHTTPRequestHandler):
             return self._json(200, canbus.monitor_status())
         if path == "/api/ap_fallback/status":
             return self._json(200, diag.ap_fallback_status())
+        if path == "/api/samba/status":
+            return self._json(200, diag.samba_status())
+        if path == "/api/backup/export":
+            if not os.path.isfile(hubconf.CONF):
+                return self._json(404, {"error": "not found"})
+            return self._sendfile(hubconf.CONF, "text/plain",
+                                   {"Content-Disposition": 'attachment; filename="teslausb_setup_variables.conf"'})
+        if path == "/api/hotspot/status":
+            return self._json(200, diag.hotspot_wifi_status())
+        if path == "/api/wireguard/status":
+            return self._json(200, diag.wireguard_status())
         if path == "/api/nas/raw_keys/pairing":
             return self._json(200, nassync.pairing_status(CFG["state"]))
         if path == "/api/ble/commands":
@@ -643,7 +663,11 @@ class H(BaseHTTPRequestHandler):
             trip_id = self._qs("trip") or ""
             if not trip_id or "/" in trip_id or "\\" in trip_id:
                 return self._json(404, {"error": "not found"})
-            gpx = blackbox.to_gpx(trip_id)
+            try:
+                gpx = blackbox.to_gpx(trip_id)
+            except Exception as e:
+                print(f"[hub] GPX export failed for {trip_id}: {e}", flush=True)
+                return self._json(500, {"error": "export failed"})
             body = gpx.encode("utf-8")
             return self._raw(200, body, "application/gpx+xml",
                               {"Content-Disposition": f'attachment; filename="{trip_id}.gpx"'})
@@ -704,6 +728,14 @@ class H(BaseHTTPRequestHandler):
                 return self._json(200, diag.set_ssh_password(body.get("password", "")))
             except Exception as e:
                 return self._json(200, {"ok": False, "error": str(e)[:300]})
+        if path == "/api/system/samba_password":
+            try:
+                return self._json(200, diag.set_samba_password(body.get("password", "")))
+            except Exception as e:
+                return self._json(200, {"ok": False, "error": str(e)[:300]})
+        if path == "/api/backup/import":
+            ok, err = hubconf.import_conf(body.get("content", ""))
+            return self._json(200 if ok else 400, {"ok": ok, "error": err})
         if path == "/api/prepare":
             cid = body.get("id", "")
             _fetch_keys_for_clip(cid)
@@ -720,6 +752,11 @@ class H(BaseHTTPRequestHandler):
             ok, err = hubconf.write_settings(body)
             if ok and "ssh_disable_password" in body:
                 diag.apply_ssh(str(body.get("ssh_disable_password")) in ("true", "True", "1", "on"))
+            if ok and "samba_enabled" in body:
+                sr = diag.apply_samba(str(body.get("samba_enabled")) in ("true", "True", "1", "on"))
+                if not sr.get("ok"):
+                    ok = False
+                    err = sr.get("error")
             if ok and "ap_fallback_only" in body:
                 enabled = str(body.get("ap_fallback_only")) in ("true", "True", "1", "on")
                 cur = hubconf.read_settings()
@@ -737,7 +774,35 @@ class H(BaseHTTPRequestHandler):
                 if not apr.get("ok"):
                     ok = False
                     err = apr.get("error")
+            if ok and "hotspot_enabled" in body:
+                enabled = str(body.get("hotspot_enabled")) in ("true", "True", "1", "on")
+                cur = hubconf.read_settings()
+                # same reasoning as ap_pass above: hotspot_pass is a SECRETS field and
+                # gets omitted by the frontend once already saved, so fall back to the
+                # stored value rather than treating "not in this request" as "no password".
+                pw = body.get("hotspot_pass") or hubconf.getval("HOTSPOT_PASS") or None
+                hr = diag.apply_hotspot_wifi(enabled, ssid=cur.get("hotspot_ssid"), password=pw)
+                if not hr.get("ok"):
+                    ok = False
+                    err = hr.get("error")
+            if ok and "wg_enabled" in body:
+                enabled = str(body.get("wg_enabled")) in ("true", "True", "1", "on")
+                cur = hubconf.read_settings()
+                psk = body.get("wg_psk") or hubconf.getval("WG_PSK") or None
+                privkey = body.get("wg_privkey") or hubconf.getval("WG_PRIVKEY") or None
+                wr = diag.apply_wireguard(enabled, peer_pubkey=cur.get("wg_peer_pubkey"),
+                                           endpoint=cur.get("wg_endpoint"), allowed_ips=cur.get("wg_allowed_ips"),
+                                           address=cur.get("wg_address"), keepalive=cur.get("wg_keepalive"),
+                                           psk=psk, privkey=privkey, dns=cur.get("wg_dns"))
+                if not wr.get("ok"):
+                    ok = False
+                    err = wr.get("error")
             return self._json(200 if ok else 400, {"ok": ok, "error": err})
+        if path == "/api/wireguard/import_qr":
+            img = body.get("image", "") or ""
+            if img.startswith("data:") and "," in img:
+                img = img.split(",", 1)[1]
+            return self._json(200, diag.import_wg_qr(img))
         if path == "/api/files/mkdir":
             filemod.mkdir(body.get("path", "")); return self._json(200, {"ok": True})
         if path == "/api/files/delete":

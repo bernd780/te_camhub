@@ -922,6 +922,41 @@ async function viewSettings(m){
       </div>
       <div class="note warn">⚠ Auf diesem Pi kann gleichzeitiger AP+WLAN-Betrieb die WLAN-Verbindung kurz stören (Chip-Limitierung, beim Testen beobachtet). Vor Verlassen des Hauses einmal in Ruhe testen, nicht blind verlassen.</div>
     </div>
+    <div class="card"><h3>Handy-Hotspot (WLAN)</h3>
+      <div class="note">Speichert einen Handy-Hotspot zusätzlich zum Heim-WLAN als bekanntes Netzwerk -- praktisch unterwegs (z. B. Werkstattbesuch), wenn kein Heim-WLAN in Reichweite ist. Heim-WLAN wird bevorzugt und übernimmt automatisch wieder, sobald es erreichbar ist.</div>
+      ${fld("Hotspot-SSID","s_hotspot_ssid","text",c.hotspot_ssid)}
+      ${fld("Hotspot-Passwort","s_hotspot_pass","password","",c.hotspot_pass_set?"•••• unverändert":"")}
+      <div class="note">SSID/Passwort hier eintragen und mit dem großen "Speichern" unten sichern, bevor unten eingeschaltet wird.</div>
+      <div class="saverow"><span class="note" id="hotspot_status">lädt…</span></div>
+      <div class="saverow">
+        <button class="btn sm" id="hotspot_on">Einschalten</button>
+        <button class="btn sm ghost" id="hotspot_off" style="display:none">Ausschalten</button>
+      </div>
+    </div>
+    <div class="card"><h3>WireGuard-VPN (nach Hause)</h3>
+      <div class="note">Baut unterwegs (z. B. über den Handy-Hotspot oben) eine verschlüsselte VPN-Verbindung zu einem WireGuard-Server zu Hause auf -- für Fernzugriff auf den Hub, ohne einen Port im Heimnetz nach außen öffnen zu müssen. Den öffentlichen Schlüssel unten in die Peer-Konfiguration des Heim-Servers eintragen, dann hier Peer-Daten eintragen, speichern und einschalten.</div>
+      <div class="saverow" style="flex-wrap:wrap;gap:10px 16px">
+        <input type="file" id="wg_qr_file" accept="image/*" style="flex:1;min-width:220px">
+        <button class="btn sm ghost" id="wg_qr_import">QR-Code auslesen</button>
+      </div>
+      <div class="note" id="wg_qr_msg"></div>
+      <div class="note">Screenshot/Foto des WireGuard-QR-Codes hochladen und auslesen -- füllt alle Felder unten (inkl. privatem Schlüssel) automatisch aus. Danach unten prüfen und mit dem großen "Speichern" sichern. Alternativ von Hand ausfüllen.</div>
+      ${fld("Peer Public-Key (Heim-Server)","s_wg_peer_pubkey","text",c.wg_peer_pubkey)}
+      ${fld("Endpoint (Host:Port)","s_wg_endpoint","text",c.wg_endpoint,"vpn.example.com:51820")}
+      ${fld("Erlaubte IPs (AllowedIPs)","s_wg_allowed_ips","text",c.wg_allowed_ips||"0.0.0.0/0")}
+      ${fld("Tunnel-Adresse des Hubs (CIDR)","s_wg_address","text",c.wg_address,"10.10.10.2/24")}
+      ${fld("Keepalive (Sek., 0=aus)","s_wg_keepalive","number",c.wg_keepalive||25)}
+      ${fld("Preshared-Key (optional)","s_wg_psk","password","",c.wg_psk_set?"•••• gesetzt":"")}
+      ${fld("Privater Schlüssel (aus QR-Code, i.d.R. nicht von Hand nötig)","s_wg_privkey","password","",c.wg_privkey_set?"•••• gesetzt":"")}
+      ${fld("DNS (optional)","s_wg_dns","text",c.wg_dns)}
+      <div class="note">Peer-Daten hier eintragen und mit dem großen "Speichern" unten sichern, bevor unten eingeschaltet wird.</div>
+      <div class="saverow"><span class="note" id="wg_status">lädt…</span></div>
+      <div class="saverow">
+        <button class="btn sm" id="wg_on">Einschalten</button>
+        <button class="btn sm ghost" id="wg_off" style="display:none">Ausschalten</button>
+      </div>
+      <div class="note">Öffentlicher Schlüssel dieses Hubs (in die Peer-Config des Heim-Servers eintragen): <code id="wg_own_pubkey">–</code></div>
+    </div>
     <div class="card"><h3>Auto wachhalten</h3>
       ${fld("TeslaFi API-Token","s_teslafi_api_token","password","",c.teslafi_api_token_set?"•••• gesetzt":"")}
       ${fld("Tessie API-Token","s_tessie_api_token","password","",c.tessie_api_token_set?"•••• gesetzt":"")}
@@ -961,6 +996,16 @@ async function viewSettings(m){
       ${fld("Mind. freien Speicher halten (GB)","s_retention_free_gb","number",c.retention_free_gb)}
       <div class="note">Gelöscht wird nur, was bereits auf dem NAS gesichert ist.</div>
     </div>
+    <div class="card"><h3>Backup & Wiederherstellung</h3>
+      <div class="note">Exportiert/importiert die komplette Konfigurationsdatei (<code>teslausb_setup_variables.conf</code>) inkl. aller Passwörter/Tokens im Klartext -- bewusst getrennt von der normalen Speichern-Funktion oben, die Passwörter aus Sicherheitsgründen nie wieder anzeigt. Gedacht als Sicherheitsnetz vor größeren Eingriffen (z. B. Stick neu flashen mit größerer Root-Partition): vorher exportieren, danach importieren statt jedes Feld von Hand neu einzutippen.</div>
+      <div class="note warn">⚠ Die exportierte Datei enthält alle Zugangsdaten im Klartext (WLAN, NAS, MQTT, Access-Point, ...). Sicher aufbewahren, nirgends unverschlüsselt hochladen/teilen.</div>
+      <div class="saverow"><a href="api/backup/export" class="btn sm ghost" download>Einstellungen exportieren</a></div>
+      <div class="saverow" style="flex-wrap:wrap;gap:10px 16px">
+        <input type="file" id="backup_import_file" accept=".conf,text/plain" style="flex:1;min-width:220px">
+        <button class="btn sm ghost" id="backup_import_btn">Einstellungen importieren</button>
+      </div>
+      <div class="note" id="backup_import_msg"></div>
+    </div>
     <div class="card"><h3>Rohschlüssel für externe Instanz</h3>
       <div class="note warn">⚠ Sicherheits-Kompromiss: standardmäßig sind die Schlüssel-Sidecar-Dateien auf dem NAS (<code>*.key.json</code>) ohne Tresor-Passwort nutzlos. Diese Option schreibt zusätzlich <b>unverschlüsselte</b> Schlüssel (<code>*.rawkey.json</code>) neben die Videos, damit ein separates System die Clips direkt lesen kann, ohne das Tresor-Passwort zu kennen. Nur aktivieren, wenn das NAS selbst vertrauenswürdig/abgesichert ist.</div>
       <div class="note">Schutz dagegen, dass Rohschlüssel versehentlich auf ein falsches/vertauschtes NAS geschrieben werden: beim ersten Mal wird ein zufälliges Kopplungs-Token sowohl hier als auch in einer Datei auf dem NAS (<code>HUB-NAS-KOPPLUNG.json</code>) hinterlegt. Stimmen die Tokens bei einem späteren Lauf nicht überein (z. B. weil ein anderes NAS unter demselben Namen erreichbar ist), werden <b>keine</b> Rohschlüssel geschrieben.</div>
@@ -971,6 +1016,18 @@ async function viewSettings(m){
         <button class="btn sm ghost" id="pairingreset">Kopplung zurücksetzen</button>
       </div>
       <div class="note" id="rawkeymsg"></div>
+    </div>
+    <div class="card"><h3>SMB-Freigabe</h3>
+      <div class="note">Stellt <code>TeslaCam</code> (RecentClips/SavedClips/SentryClips, nur lesend) als Netzwerkfreigabe bereit, z. B. zum Durchsuchen/Kopieren vom PC aus. Standardmäßig an, passwortgeschützt (Benutzer <code>pi</code>).</div>
+      <div class="note">Neben jedem Video, dessen Schlüssel im Tresor bekannt ist, liegt automatisch eine <code>*.mp4.key.json</code>-Datei -- verschlüsselt mit dem Tresor-Passwort, nutzlos ohne dieses. So lassen sich Video + Schlüssel gemeinsam per SMB kopieren. Erscheint spätestens 60s nach dem Entsperren des Tresors, wird nicht rückwirkend für schon vom Gerät gelöschte Videos nachgetragen.</div>
+      ${chk("SMB-Freigabe aktiv","s_samba_enabled",c.samba_enabled!=='false')}
+      <div class="saverow"><span class="note" id="sambastatus">lädt…</span></div>
+      <div class="saverow" style="flex-wrap:wrap;gap:10px 16px">
+        <input id="s_samba_pw_new" type="password" placeholder="neues SMB-Passwort (min. 8 Zeichen)" style="flex:1;min-width:220px;padding:10px 12px;background:var(--bg2);border:1px solid var(--line);border-radius:10px;color:var(--text)">
+        <button class="btn sm ghost" id="sambapwchange">SMB-Passwort setzen</button>
+      </div>
+      <div class="note">Unabhängig vom Tresor- und SSH-Passwort. Beim allerersten Aktivieren (per <code>hub/install.sh</code>) wird automatisch ein zufälliges Passwort vergeben und einmalig im Install-Log ausgegeben -- hier direkt ein eigenes setzen.</div>
+      <div class="note" id="sambapwmsg"></div>
     </div>
     <div class="card"><h3>Sicherheit & System</h3>
       <div class="note">Grundprinzip: der Stick soll bei Diebstahl wertlos sein. Entschlüsselungs-Schlüssel und Tesla-Token liegen nie unverschlüsselt auf dem Stick, sondern nur verschlüsselt im Tresor; das eigentliche Video wird beim Ansehen nur kurz im RAM entschlüsselt, nie dauerhaft gespeichert. Die beiden Einstellungen unten sichern die zwei verbleibenden Angriffsflächen ab: den Fernzugriff (SSH) und den Zustand "Tresor gerade entsperrt".</div>
@@ -1031,6 +1088,37 @@ async function viewSettings(m){
       else{$("#sshpwmsg").textContent="✗ "+(r.error||"Fehler");}
     }catch(e){$("#sshpwmsg").textContent="✗ Verbindungsfehler";}
   };
+  $("#sambapwchange").onclick=async()=>{
+    const newp=$("#s_samba_pw_new").value;
+    if(!newp||newp.length<8){$("#sambapwmsg").textContent="✗ Passwort sollte mind. 8 Zeichen haben";return;}
+    $("#sambapwmsg").textContent="setze…";
+    try{
+      const r=await jpost("api/system/samba_password",{password:newp});
+      if(r.ok){$("#sambapwmsg").textContent="✓ SMB-Passwort gesetzt";$("#s_samba_pw_new").value="";toast("SMB-Passwort geändert");}
+      else{$("#sambapwmsg").textContent="✗ "+(r.error||"Fehler");}
+    }catch(e){$("#sambapwmsg").textContent="✗ Verbindungsfehler";}
+  };
+  $("#backup_import_btn").onclick=async()=>{
+    const file=$("#backup_import_file").files[0];
+    if(!file){$("#backup_import_msg").textContent="✗ bitte zuerst eine Datei auswählen";return;}
+    if(!confirm("Alle aktuellen Einstellungen mit dieser Datei überschreiben?"))return;
+    $("#backup_import_msg").textContent="importiere…";
+    try{
+      const text=await file.text();
+      const r=await jpost("api/backup/import",{content:text});
+      if(r.ok){$("#backup_import_msg").textContent="✓ importiert -- Seite neu laden, danach Hub/Pi neu starten, damit alles greift";toast("Einstellungen importiert");}
+      else{$("#backup_import_msg").textContent="✗ "+(r.error||"Fehler");}
+    }catch(e){$("#backup_import_msg").textContent="✗ Verbindungsfehler";}
+  };
+  async function refreshSambaStatus(){
+    const el=$("#sambastatus");
+    if(!el)return;
+    let r;try{r=await jget("api/samba/status");}catch(e){setTimeout(refreshSambaStatus,15000);return;}
+    if(!r.installed)el.textContent="nicht installiert -- hub/install.sh erneut ausführen";
+    else el.textContent=(r.active?"✓ aktiv":"aus")+" -- "+r.share;
+    if(document.body.contains(el))setTimeout(refreshSambaStatus,15000);
+  }
+  refreshSambaStatus();
   async function refreshPairingStatus(){
     try{
       const r=await jget("api/nas/raw_keys/pairing");
@@ -1070,11 +1158,12 @@ async function viewSettings(m){
   $("#savebtn").onclick=async()=>{
     const fields=["archive_server","share_name","share_user","ssid","ap_ssid","tesla_ble_vin",
       "telegram_chat_id","retention_days","retention_free_gb","vault_autolock_min","time_zone","teslausb_hostname","sync_media_path",
-      "mqtt_host","mqtt_port","mqtt_user"];
+      "mqtt_host","mqtt_port","mqtt_user","hotspot_ssid",
+      "wg_peer_pubkey","wg_endpoint","wg_allowed_ips","wg_address","wg_keepalive","wg_dns"];
     const secrets=["share_password","wifipass","ap_pass","teslafi_api_token","tessie_api_token",
-      "pushover_user_key","pushover_app_key","telegram_bot_token","mqtt_password"];
+      "pushover_user_key","pushover_app_key","telegram_bot_token","mqtt_password","hotspot_pass","wg_psk","wg_privkey"];
     const bools=["archive_recentclips","archive_savedclips","archive_sentryclips","sync_all_content",
-      "ssh_disable_password","pushover_enabled","telegram_enabled","mqtt_enabled","nas_raw_keys"];
+      "ssh_disable_password","pushover_enabled","telegram_enabled","mqtt_enabled","nas_raw_keys","samba_enabled"];
     const body={};
     fields.forEach(f=>body[f]=($("#s_"+f)||{}).value||"");
     secrets.forEach(f=>{const v=($("#s_"+f)||{}).value;if(v)body[f]=v;});
@@ -1121,6 +1210,106 @@ async function viewSettings(m){
     refreshApFallback();
   };
   refreshApFallback();
+  async function refreshHotspot(){
+    const statusEl=$("#hotspot_status");
+    if(!statusEl)return;
+    let r;try{r=await jget("api/hotspot/status");}catch(e){setTimeout(refreshHotspot,15000);return;}
+    const onBtn=$("#hotspot_on"),offBtn=$("#hotspot_off");
+    if(r.enabled){
+      onBtn.style.display="none";offBtn.style.display="";
+      statusEl.textContent=r.connected_now?"✓ verbunden":"bereit (nicht verbunden)";
+    }else{
+      onBtn.style.display="";offBtn.style.display="none";
+      statusEl.textContent="aus";
+    }
+    if(document.body.contains(statusEl))setTimeout(refreshHotspot,15000);
+  }
+  $("#hotspot_on").onclick=async()=>{
+    $("#hotspot_on").disabled=true;
+    $("#hotspot_status").textContent="schalte ein…";
+    try{
+      const r=await jpost("api/settings",{hotspot_enabled:true});
+      if(!r.ok)$("#hotspot_status").textContent="✗ "+(r.error||"Fehler");
+    }catch(e){$("#hotspot_status").textContent="✗ Verbindungsfehler";}
+    $("#hotspot_on").disabled=false;
+    refreshHotspot();
+  };
+  $("#hotspot_off").onclick=async()=>{
+    $("#hotspot_off").disabled=true;
+    $("#hotspot_status").textContent="schalte aus…";
+    try{
+      const r=await jpost("api/settings",{hotspot_enabled:false});
+      if(!r.ok)$("#hotspot_status").textContent="✗ "+(r.error||"Fehler");
+    }catch(e){$("#hotspot_status").textContent="✗ Verbindungsfehler";}
+    $("#hotspot_off").disabled=false;
+    refreshHotspot();
+  };
+  refreshHotspot();
+  $("#wg_qr_import").onclick=async()=>{
+    const file=($("#wg_qr_file").files||[])[0];
+    if(!file){$("#wg_qr_msg").textContent="✗ bitte zuerst ein Bild auswählen";return;}
+    $("#wg_qr_msg").textContent="lese QR-Code…";
+    try{
+      const dataUrl=await new Promise((resolve,reject)=>{
+        const fr=new FileReader();
+        fr.onload=()=>resolve(String(fr.result||""));
+        fr.onerror=()=>reject(new Error("read failed"));
+        fr.readAsDataURL(file);
+      });
+      const r=await jpost("api/wireguard/import_qr",{image:dataUrl});
+      if(!r.ok){$("#wg_qr_msg").textContent="✗ "+(r.error||"Fehler beim Lesen");return;}
+      const cfg=r.config||{};
+      if(cfg.peer_pubkey)$("#s_wg_peer_pubkey").value=cfg.peer_pubkey;
+      if(cfg.endpoint)$("#s_wg_endpoint").value=cfg.endpoint;
+      if(cfg.allowed_ips)$("#s_wg_allowed_ips").value=cfg.allowed_ips;
+      if(cfg.address)$("#s_wg_address").value=cfg.address;
+      if(cfg.keepalive)$("#s_wg_keepalive").value=cfg.keepalive;
+      if(cfg.psk)$("#s_wg_psk").value=cfg.psk;
+      if(cfg.privkey)$("#s_wg_privkey").value=cfg.privkey;
+      if(cfg.dns)$("#s_wg_dns").value=cfg.dns;
+      $("#wg_qr_msg").textContent="✓ Felder ausgefüllt -- unten prüfen und mit „Speichern“ sichern";
+      toast("QR-Code gelesen");
+    }catch(e){$("#wg_qr_msg").textContent="✗ Fehler beim Lesen der Datei";}
+  };
+  async function refreshWg(){
+    const statusEl=$("#wg_status");
+    if(!statusEl)return;
+    let r;try{r=await jget("api/wireguard/status");}catch(e){setTimeout(refreshWg,15000);return;}
+    const pkEl=$("#wg_own_pubkey");
+    if(pkEl)pkEl.textContent=r.own_pubkey||"–";
+    const onBtn=$("#wg_on"),offBtn=$("#wg_off");
+    if(r.enabled){
+      onBtn.style.display="none";offBtn.style.display="";
+      statusEl.textContent=r.active?
+        ("✓ aktiv"+(r.handshake?" -- letzter Handshake "+r.handshake:"")+(r.transfer?" ("+r.transfer+")":"")):
+        "wird gestartet…";
+    }else{
+      onBtn.style.display="";offBtn.style.display="none";
+      statusEl.textContent="aus";
+    }
+    if(document.body.contains(statusEl))setTimeout(refreshWg,15000);
+  }
+  $("#wg_on").onclick=async()=>{
+    $("#wg_on").disabled=true;
+    $("#wg_status").textContent="schalte ein…";
+    try{
+      const r=await jpost("api/settings",{wg_enabled:true});
+      if(!r.ok)$("#wg_status").textContent="✗ "+(r.error||"Fehler");
+    }catch(e){$("#wg_status").textContent="✗ Verbindungsfehler";}
+    $("#wg_on").disabled=false;
+    refreshWg();
+  };
+  $("#wg_off").onclick=async()=>{
+    $("#wg_off").disabled=true;
+    $("#wg_status").textContent="schalte aus…";
+    try{
+      const r=await jpost("api/settings",{wg_enabled:false});
+      if(!r.ok)$("#wg_status").textContent="✗ "+(r.error||"Fehler");
+    }catch(e){$("#wg_status").textContent="✗ Verbindungsfehler";}
+    $("#wg_off").disabled=false;
+    refreshWg();
+  };
+  refreshWg();
 }
 
 boot();
