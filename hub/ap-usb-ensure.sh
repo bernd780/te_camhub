@@ -29,7 +29,11 @@
 # `iw scan` against this exact profile. Several real clients (a Tesla's
 # onboard WiFi among them) fail to associate against that mixed mode and
 # report it back to the user as a plain wrong-password error, even though
-# the password matches byte for byte.
+# the password matches byte for byte. proto/pairwise/group alone still
+# left SAE in the advertised AKM suites (RSN capability, independent of
+# the cipher settings) -- pmf=1 (disable Protected Management Frames,
+# which SAE requires) is what actually drops SAE from the list, also
+# confirmed via `iw scan`.
 
 SSID="${1:?ssid required}"
 PASS="${2:?password required}"
@@ -87,6 +91,7 @@ key-mgmt=wpa-psk
 proto=rsn
 pairwise=ccmp
 group=ccmp
+pmf=1
 psk=$PASS
 
 [ipv4]

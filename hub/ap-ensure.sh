@@ -29,7 +29,10 @@
 # transition AP (RSN offering SAE alongside PSK, TKIP alongside CCMP),
 # which several real clients -- a Tesla's onboard WiFi among them -- fail
 # to associate against, surfacing as a plain wrong-password error to the
-# user even with a byte-for-byte correct password. See ap-usb-ensure.sh.
+# user even with a byte-for-byte correct password. pmf=1 (disable
+# Protected Management Frames, which SAE requires) is what actually drops
+# SAE from the advertised AKM suites -- proto/pairwise/group alone don't.
+# See ap-usb-ensure.sh, where this was diagnosed via `iw scan`.
 
 SSID="${1:?ssid required}"
 PASS="${2:?password required}"
@@ -74,6 +77,7 @@ key-mgmt=wpa-psk
 proto=rsn
 pairwise=ccmp
 group=ccmp
+pmf=1
 psk=$PASS
 
 [ipv4]
