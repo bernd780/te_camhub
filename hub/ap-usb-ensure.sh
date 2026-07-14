@@ -21,6 +21,15 @@
 # saved. Same keyfile-write-then-`nmcli con reload` approach as
 # ap-ensure.sh/hotspot-ensure.sh (see ap-ensure.sh's header for why
 # `nmcli con add`/`modify` don't reliably persist on this Pi).
+#
+# wifi-security pins proto=rsn/pairwise=ccmp/group=ccmp (pure WPA2-PSK/AES)
+# rather than leaving NetworkManager to pick defaults for a bare
+# key-mgmt=wpa-psk: without those, NM advertises a WPA2/WPA3-transition AP
+# (RSN offering SAE alongside PSK, TKIP alongside CCMP) -- confirmed via
+# `iw scan` against this exact profile. Several real clients (a Tesla's
+# onboard WiFi among them) fail to associate against that mixed mode and
+# report it back to the user as a plain wrong-password error, even though
+# the password matches byte for byte.
 
 SSID="${1:?ssid required}"
 PASS="${2:?password required}"
@@ -75,6 +84,9 @@ ssid=$SSID
 
 [wifi-security]
 key-mgmt=wpa-psk
+proto=rsn
+pairwise=ccmp
+group=ccmp
 psk=$PASS
 
 [ipv4]

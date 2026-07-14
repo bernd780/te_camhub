@@ -23,6 +23,13 @@
 #      `nmcli con reload` afterwards is a read, which NM's sandbox permits.
 # autoconnect=false is baked into the template itself so the Hub never needs
 # a separate `nmcli con modify ... autoconnect` call to (un)set it.
+#
+# wifi-security pins proto=rsn/pairwise=ccmp/group=ccmp (pure WPA2-PSK/AES)
+# -- a bare key-mgmt=wpa-psk lets NetworkManager default to a WPA2/WPA3
+# transition AP (RSN offering SAE alongside PSK, TKIP alongside CCMP),
+# which several real clients -- a Tesla's onboard WiFi among them -- fail
+# to associate against, surfacing as a plain wrong-password error to the
+# user even with a byte-for-byte correct password. See ap-usb-ensure.sh.
 
 SSID="${1:?ssid required}"
 PASS="${2:?password required}"
@@ -64,6 +71,9 @@ ssid=$SSID
 
 [wifi-security]
 key-mgmt=wpa-psk
+proto=rsn
+pairwise=ccmp
+group=ccmp
 psk=$PASS
 
 [ipv4]
