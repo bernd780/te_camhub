@@ -75,6 +75,7 @@ function render(view){
   const m=$("#main");m.innerHTML="";
   if(view==="clips")return viewClips(m);
   if(view==="files")return viewFiles(m,"");
+  if(view==="videos")return viewVideos(m);
   if(view==="diag")return viewDiag(m);
   if(view==="ble")return viewBle(m);
   if(view==="canbus")return viewCanbus(m);
@@ -435,6 +436,64 @@ function audioPlayer(rel,name){
   document.body.append(bar);
 }
 function human(b){b=+b||0;const u=["B","KB","MB","GB"];let i=0;while(b>=1024&&i<3){b/=1024;i++;}return b.toFixed(i?1:0)+" "+u[i];}
+
+/* ---------------- Videos ---------------- */
+async function viewVideos(m){
+  m.append(el("h2","title","Videos"));
+  m.append(el("div","note","Dateien landen hier über die SMB-Freigabe „Videos“ (\\\\"+location.hostname+"\\Videos). MKV & Co. werden beim ersten Abspielen automatisch in ein browserkompatibles Format umgewandelt -- das kann beim ersten Mal etwas dauern, ist danach aber sofort da."));
+  const playerWrap=el("div","card");playerWrap.style.display="none";
+  playerWrap.innerHTML=`<video id="videoplayer" controls style="width:100%;max-height:70vh;background:#000;border-radius:10px"></video>
+    <div class="saverow" style="margin-top:10px"><span class="note" id="videoplayer_cap"></span></div>`;
+  m.append(playerWrap);
+  const list=el("div","filelist");m.append(list);
+
+  async function refresh(){
+    list.innerHTML="lädt…";
+    let data;try{data=await jget("api/videos");}catch(e){list.textContent="✗ Fehler beim Laden";return;}
+    const vids=data.videos||[];
+    list.innerHTML="";
+    if(!vids.length){list.append(el("div","note","Noch keine Videos im Ordner. Einfach per SMB draufkopieren."));return;}
+    for(const v of vids){
+      const it=el("div","fileitem");
+      it.innerHTML=`<span class="ic">🎞️</span>`;
+      const nm=el("div","nm",v.name);it.append(nm);
+      it.append(el("div","sz",human(v.size)+(v.ready?"":" · wird beim Abspielen vorbereitet")));
+      const act=el("div","act");
+      const play=el("button","iconbtn","▶️");play.title="Abspielen";
+      play.onclick=()=>playVideo(v.name);
+      act.append(play);
+      const del=el("button","iconbtn","🗑️");del.title="Vorbereitete Kopie löschen (bei Bedarf neu erzeugen)";
+      del.onclick=async e=>{e.stopPropagation();await jpost("api/videos/delete_cache",{name:v.name});toast("Zurückgesetzt");refresh();};
+      act.append(del);
+      it.append(act);
+      it.onclick=()=>playVideo(v.name);
+      list.append(it);
+    }
+  }
+
+  async function playVideo(name){
+    playerWrap.style.display="";
+    playerWrap.scrollIntoView({behavior:"smooth"});
+    const cap=$("#videoplayer_cap"),vid=$("#videoplayer");
+    vid.pause();vid.removeAttribute("src");vid.load();
+    cap.textContent=name+" -- wird vorbereitet…";
+    try{
+      const r=await jpost("api/videos/prepare",{name});
+      if(!r.ok){cap.textContent="✗ "+(r.error||"Fehler");return;}
+      let st=r;
+      while(st.state==="working"){
+        await new Promise(res=>setTimeout(res,2000));
+        st=await jget("api/videos/status?name="+encodeURIComponent(name));
+      }
+      if(st.state!=="done"){cap.textContent="✗ "+(st.error||"Fehler bei der Vorbereitung");return;}
+      cap.textContent=name;
+      vid.src="media/videos/"+encodeURIComponent(name);
+      vid.play().catch(()=>{});
+    }catch(e){cap.textContent="✗ Verbindungsfehler";}
+  }
+
+  refresh();
+}
 
 /* ---------------- Diagnose ---------------- */
 async function viewDiag(m){

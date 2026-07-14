@@ -13,12 +13,12 @@ import sys, os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import ssl, json, argparse, threading, time, secrets, base64, posixpath, hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, unquote
 
 from vault import Vault, VaultError
 from viewer import Viewer
 from tesla_auth import TeslaAuth
-import tesla_api, keybridge, hubconf, files as filemod, diag, nassync, mqtt_ha, eventlog, blackbox, canbus, keepawake
+import tesla_api, keybridge, hubconf, files as filemod, diag, nassync, mqtt_ha, eventlog, blackbox, canbus, keepawake, videos
 
 WWW = os.path.join(os.path.dirname(os.path.abspath(__file__)), "www")
 
@@ -574,6 +574,16 @@ class H(BaseHTTPRequestHandler):
                   "application/json" if full.endswith(".json") else
                   "image/png" if full.endswith(".png") else "application/octet-stream")
             return self._sendfile(full, ct)
+        if path == "/api/videos":
+            return self._json(200, {"videos": videos.list_videos()})
+        if path == "/api/videos/status":
+            return self._json(200, videos.status(unquote(self._qs("name") or "")))
+        if path.startswith("/media/videos/"):
+            name = unquote(path[len("/media/videos/"):])
+            full = videos.resolve(name)
+            if not full:
+                return self._json(404, {"error": "not ready"})
+            return self._sendfile(full, "video/mp4")
         if path == "/api/settings":
             return self._json(200, hubconf.read_settings())
         if path == "/api/files":
@@ -828,6 +838,13 @@ class H(BaseHTTPRequestHandler):
                 return self._json(200, {"ok": True})
             except Exception as e:
                 return self._json(400, {"ok": False, "error": str(e)})
+        if path == "/api/videos/prepare":
+            try:
+                return self._json(200, videos.prepare(body.get("name", "")))
+            except Exception as e:
+                return self._json(400, {"ok": False, "error": str(e)})
+        if path == "/api/videos/delete_cache":
+            videos.delete_cache(body.get("name", "")); return self._json(200, {"ok": True})
         if path == "/api/reboot":
             return self._json(200, diag.reboot())
         if path == "/api/toggle_drives":
