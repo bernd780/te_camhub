@@ -619,6 +619,8 @@ class H(BaseHTTPRequestHandler):
             return self._json(200, canbus.monitor_status())
         if path == "/api/ap_fallback/status":
             return self._json(200, diag.ap_fallback_status())
+        if path == "/api/ap_usb/status":
+            return self._json(200, diag.ap_usb_status())
         if path == "/api/samba/status":
             return self._json(200, diag.samba_status())
         if path == "/api/backup/export":
@@ -774,6 +776,15 @@ class H(BaseHTTPRequestHandler):
                 if not apr.get("ok"):
                     ok = False
                     err = apr.get("error")
+            if ok and "ap_on_usb" in body:
+                enabled = str(body.get("ap_on_usb")) in ("true", "True", "1", "on")
+                cur = hubconf.read_settings()
+                pw = body.get("ap_pass") or hubconf.getval("AP_PASS") or None
+                aur = diag.apply_ap_on_usb(enabled, ssid=cur.get("ap_ssid"),
+                                            password=pw, ap_ip=cur.get("ap_ip"))
+                if not aur.get("ok"):
+                    ok = False
+                    err = aur.get("error")
             if ok and "hotspot_enabled" in body:
                 enabled = str(body.get("hotspot_enabled")) in ("true", "True", "1", "on")
                 cur = hubconf.read_settings()

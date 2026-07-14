@@ -33,7 +33,7 @@ apt-get update -y
 # a manually-installed static build, the existing workaround on this box),
 # skip asking apt for the real package instead of re-attempting (and
 # re-failing) that huge pull on every install.sh re-run.
-PKGS="python3-pip openssl wireguard-tools libzbar0 python3-pil python3-pyzbar"
+PKGS="python3-pip openssl wireguard-tools libzbar0 python3-pil python3-pyzbar openresolv firmware-realtek"
 if ! command -v ffmpeg > /dev/null; then
   PKGS="$PKGS ffmpeg"
 fi
@@ -75,10 +75,11 @@ systemctl enable teslacam-latest-snapshot.timer
 systemctl start teslacam-latest-snapshot.timer
 systemctl start teslacam-latest-snapshot.service
 
-echo "[hub-install] installing AP-fallback helper + timer (disabled until enabled in Einstellungen)"
+echo "[hub-install] installing AP-fallback + AP-on-USB helper scripts (off until enabled in Einstellungen)"
 cp "$HUB_SRC/ap-ensure.sh" "$HUB_DST/ap-ensure.sh"
 cp "$HUB_SRC/ap-fallback-watch.sh" "$HUB_DST/ap-fallback-watch.sh"
-chmod +x "$HUB_DST/ap-ensure.sh" "$HUB_DST/ap-fallback-watch.sh"
+cp "$HUB_SRC/ap-usb-ensure.sh" "$HUB_DST/ap-usb-ensure.sh"
+chmod +x "$HUB_DST/ap-ensure.sh" "$HUB_DST/ap-fallback-watch.sh" "$HUB_DST/ap-usb-ensure.sh"
 cp "$HUB_SRC/teslacam-ap-fallback.service" /etc/systemd/system/teslacam-ap-fallback.service
 cp "$HUB_SRC/teslacam-ap-fallback.timer" /etc/systemd/system/teslacam-ap-fallback.timer
 systemctl daemon-reload

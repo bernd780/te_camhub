@@ -921,6 +921,12 @@ async function viewSettings(m){
         <button class="btn sm ghost" id="apfallback_off" style="display:none">Ausschalten</button>
       </div>
       <div class="note warn">⚠ Auf diesem Pi kann gleichzeitiger AP+WLAN-Betrieb die WLAN-Verbindung kurz stören (Chip-Limitierung, beim Testen beobachtet). Vor Verlassen des Hauses einmal in Ruhe testen, nicht blind verlassen.</div>
+      <div class="note" id="apusb_note" style="display:none">Externer USB-WLAN-Adapter erkannt (<code id="apusb_device"></code>) -- behebt das Chip-Problem oben komplett: der Access Point läuft dann als eigenes Funkgerät, ohne sich mit dem Heim-WLAN die Antenne zu teilen.</div>
+      <div class="saverow" id="apusb_row" style="display:none">
+        <span class="note" id="apusb_status">lädt…</span>
+        <button class="btn sm" id="apusb_on">Dauerhaft auf USB-Adapter verlagern</button>
+        <button class="btn sm ghost" id="apusb_off" style="display:none">Zurück auf Onboard-Chip</button>
+      </div>
     </div>
     <div class="card"><h3>Handy-Hotspot (WLAN)</h3>
       <div class="note">Speichert einen Handy-Hotspot zusätzlich zum Heim-WLAN als bekanntes Netzwerk -- praktisch unterwegs (z. B. Werkstattbesuch), wenn kein Heim-WLAN in Reichweite ist. Heim-WLAN wird bevorzugt und übernimmt automatisch wieder, sobald es erreichbar ist.</div>
@@ -1210,6 +1216,47 @@ async function viewSettings(m){
     refreshApFallback();
   };
   refreshApFallback();
+  async function refreshApUsb(){
+    const row=$("#apusb_row"),note=$("#apusb_note"),statusEl=$("#apusb_status");
+    if(!row)return;
+    let r;try{r=await jget("api/ap_usb/status");}catch(e){setTimeout(refreshApUsb,15000);return;}
+    if(!r.usb_available){
+      row.style.display="none";note.style.display="none";
+    }else{
+      row.style.display="";note.style.display="";
+      $("#apusb_device").textContent=r.usb_device;
+      const onBtn=$("#apusb_on"),offBtn=$("#apusb_off");
+      if(r.ap_on_usb){
+        onBtn.style.display="none";offBtn.style.display="";
+        statusEl.textContent="✓ aktiv auf "+r.usb_device;
+      }else{
+        onBtn.style.display="";offBtn.style.display="none";
+        statusEl.textContent="noch auf Onboard-Chip";
+      }
+    }
+    if(document.body.contains(row))setTimeout(refreshApUsb,15000);
+  }
+  $("#apusb_on").onclick=async()=>{
+    $("#apusb_on").disabled=true;
+    $("#apusb_status").textContent="verlagere…";
+    try{
+      const r=await jpost("api/settings",{ap_on_usb:true});
+      if(!r.ok)$("#apusb_status").textContent="✗ "+(r.error||"Fehler");
+    }catch(e){$("#apusb_status").textContent="✗ Verbindungsfehler";}
+    $("#apusb_on").disabled=false;
+    refreshApUsb();
+  };
+  $("#apusb_off").onclick=async()=>{
+    $("#apusb_off").disabled=true;
+    $("#apusb_status").textContent="schalte aus…";
+    try{
+      const r=await jpost("api/settings",{ap_on_usb:false});
+      if(!r.ok)$("#apusb_status").textContent="✗ "+(r.error||"Fehler");
+    }catch(e){$("#apusb_status").textContent="✗ Verbindungsfehler";}
+    $("#apusb_off").disabled=false;
+    refreshApUsb();
+  };
+  refreshApUsb();
   async function refreshHotspot(){
     const statusEl=$("#hotspot_status");
     if(!statusEl)return;

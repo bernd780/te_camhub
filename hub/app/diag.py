@@ -416,6 +416,74 @@ def _set_ap_autoconnect(enabled):
     subprocess.run(["nmcli", "con", "reload"], capture_output=True)
 
 
+def _usb_wifi_device():
+    """Find a WiFi interface attached via USB (any chipset/brand) by sysfs
+    device path rather than a hardcoded interface name -- wlan1 isn't
+    guaranteed to stay wlan1 across reboots/replugs, but "the wifi
+    interface whose /sys/class/net/<if>/device path routes through a
+    /usbN/ bus" is stable as long as only one USB WiFi adapter is ever
+    attached (the onboard chip's path routes through mmc/sdio instead)."""
+    try:
+        ifaces = sorted(os.listdir("/sys/class/net"))
+    except OSError:
+        return None
+    for ifname in ifaces:
+        if not ifname.startswith("wlan"):
+            continue
+        try:
+            devpath = os.path.realpath(f"/sys/class/net/{ifname}/device")
+        except OSError:
+            continue
+        if "/usb" in devpath:
+            return ifname
+    return None
+
+
+def ap_usb_status():
+    """Live status for the settings UI: is a USB WiFi adapter plugged in
+    right now, and is the AP currently bound to it (vs. still on the
+    onboard chip's ap0, or off)."""
+    usb_if = _usb_wifi_device()
+    bound_to_usb = False
+    if usb_if:
+        r = _run(["nmcli", "-t", "-f", "NAME,DEVICE", "c", "show", "--active"])
+        active_on_usb = f"TESLAUSB_AP:{usb_if}" in (r.stdout or "").splitlines() if r and r.returncode == 0 else False
+        bound_to_usb = active_on_usb
+    return {"usb_available": usb_if is not None, "usb_device": usb_if, "ap_on_usb": bound_to_usb}
+
+
+def apply_ap_on_usb(enabled, ssid=None, password=None, ap_ip=None):
+    """Permanently move the TESLAUSB_AP hotspot onto a plugged-in USB WiFi
+    adapter (see hub/ap-usb-ensure.sh for why: eliminates the onboard
+    chip's AP+STA contention that the AP-Fallback UI already warns can
+    briefly disrupt home WiFi). Disabling just stops/removes the
+    USB-bound profile -- it does not automatically recreate the onboard
+    ap0 setup; use the regular AP-Fallback toggle for that."""
+    subprocess.run(["mount", "/", "-o", "remount,rw"], capture_output=True)
+    try:
+        if not enabled:
+            subprocess.run(["nmcli", "con", "down", "TESLAUSB_AP"], capture_output=True)
+            return {"ok": True}
+        usb_if = _usb_wifi_device()
+        if not usb_if:
+            return {"ok": False, "error": "kein USB-WLAN-Adapter gefunden -- erst einstecken"}
+        r = subprocess.run(["nmcli", "-t", "-f", "NAME", "c", "show"], capture_output=True, text=True)
+        has_ap = "TESLAUSB_AP" in (r.stdout or "").splitlines()
+        if not has_ap and not (ssid and password):
+            return {"ok": False, "error": "zuerst Access-Point-SSID und -Passwort eintragen und speichern"}
+        if ssid and password:
+            r = subprocess.run(["bash", "/opt/teslacam-hub/ap-usb-ensure.sh", ssid, password, ap_ip or "192.168.66.1"],
+                                capture_output=True, text=True, timeout=30)
+            if r.returncode != 0:
+                return {"ok": False, "error": (r.stderr or "AP-Einrichtung auf USB fehlgeschlagen").strip()[:200]}
+        else:
+            return {"ok": False, "error": "Access-Point-SSID/-Passwort fehlen"}
+        subprocess.run(["systemctl", "disable", "--now", "teslacam-ap-fallback.timer"], capture_output=True)
+        return {"ok": True}
+    finally:
+        subprocess.run(["mount", "/", "-o", "remount,ro"], capture_output=True)
+
+
 def apply_ap_fallback(enabled, ssid=None, password=None, ap_ip=None):
     """Toggle 'AP only as fallback when home WiFi is unavailable' mode.
 
