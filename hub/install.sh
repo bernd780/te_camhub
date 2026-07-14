@@ -54,6 +54,25 @@ mkdir -p "$HUB_DST"
 rsync -a --delete --exclude '__pycache__' "$HUB_SRC/app/" "$HUB_DST/app/"
 mkdir -p "$STATE_DIR" /dev/shm/teslacam "$TLS_DIR"
 
+# teslausb's own first-boot setup fetches run/archiveloop and
+# run/make_snapshot.sh from ${REPO}/teslausb/${BRANCH} -- a URL scheme
+# that assumes the fork keeps the upstream repo name. This fork is named
+# te_camhub, so REPO=bernd780 404s (see teslausb_setup_variables.conf.sample's
+# REPO/BRANCH comment) and the device is stuck running unmodified
+# marcone/main-dev core scripts. That silently breaks archiving on any
+# car whose firmware writes dashcam clips under TeslaCam/EncryptedClips/
+# (2026.20+) instead of directly under TeslaCam/, since the upstream
+# make_snapshot.sh only looks in the old location and never links any
+# files for archiveloop to pick up -- NAS sync then reports "0 event
+# folders" forever, with no error anywhere. Deploy this fork's fixed
+# versions directly so a fresh stick doesn't need to hit that failure
+# once before getting patched by hand.
+echo "[hub-install] deploying this fork's run/archiveloop + run/make_snapshot.sh (upstream REPO/BRANCH fetch can't reach a renamed fork -- see comment above)"
+mkdir -p /root/bin
+cp "$HUB_SRC/../run/archiveloop" /root/bin/archiveloop
+cp "$HUB_SRC/../run/make_snapshot.sh" /root/bin/make_snapshot.sh
+chmod +x /root/bin/archiveloop /root/bin/make_snapshot.sh
+
 echo "[hub-install] generating self-signed TLS cert (if missing)"
 if [ ! -f "$TLS_DIR/cert.pem" ] || [ ! -f "$TLS_DIR/key.pem" ]; then
   HOST=$(hostname)
