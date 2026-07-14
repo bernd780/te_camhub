@@ -70,6 +70,13 @@ then
   mv /backingfiles/TeslaCam /mutable/TeslaCam
 fi
 
+# General-purpose read-write share for anything that doesn't need the
+# TeslaCam symlink/snapshot machinery (e.g. video files to watch via the
+# Hub) -- plain folder straight on the backingfiles partition, which has
+# by far the most free space of any partition on the stick.
+mkdir -p /backingfiles/Videos
+chmod 777 /backingfiles/Videos
+
 # always update smb.conf in case we're updating a previous install
 cat <<- EOF > /etc/samba/smb.conf
 	[global]
@@ -102,4 +109,13 @@ cat <<- EOF > /etc/samba/smb.conf
 	   veto files = /._*/.DS_Store/
 	   delete veto files = yes
 	   root preexec = /root/bin/make_snapshot.sh
+
+	[Videos]
+	   read only = no
+	   path = /backingfiles/Videos
+	   guest ok = $GUEST_OK
+	   create mask = 0775
+	   directory mask = 0775
+	   veto files = /._*/.DS_Store/
+	   delete veto files = yes
 	EOF
