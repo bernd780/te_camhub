@@ -94,8 +94,13 @@ def _prepare_worker(name, full):
         # Fast path: just repackage the existing streams into MP4, no
         # re-encode -- works whenever the source is already H.264/AAC
         # (the common case for MKV rips), takes seconds not minutes.
+        # -f mp4 is required, not cosmetic: the output path ends in
+        # ".mp4.tmp" (so a failed attempt never leaves a half-written file
+        # at the real cache path) and ffmpeg can't infer a container from
+        # that extension on its own -- without -f it aborts immediately
+        # with "Unable to find a suitable output format", every time.
         r = subprocess.run(
-            ["ffmpeg", "-y", "-i", full, "-c", "copy", "-movflags", "+faststart", tmp],
+            ["ffmpeg", "-y", "-i", full, "-c", "copy", "-movflags", "+faststart", "-f", "mp4", tmp],
             capture_output=True, text=True, timeout=1800)
         if r.returncode != 0 or not os.path.isfile(tmp) or os.path.getsize(tmp) == 0:
             # Source codec isn't MP4-safe (HEVC, DTS/AC3, ...) -- real
@@ -103,7 +108,8 @@ def _prepare_worker(name, full):
             # rare fallback, not the default path.
             r = subprocess.run(
                 ["ffmpeg", "-y", "-i", full, "-c:v", "libx264", "-preset", "veryfast",
-                 "-crf", "23", "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", tmp],
+                 "-crf", "23", "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart",
+                 "-f", "mp4", tmp],
                 capture_output=True, text=True, timeout=10800)
             if r.returncode != 0:
                 raise RuntimeError((r.stderr or "ffmpeg fehlgeschlagen").strip()[-300:])
