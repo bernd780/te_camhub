@@ -17,6 +17,16 @@ EncryptedClips folder that teslausb's own archiveloop writes to, so local and
 remote relative paths line up 1:1 -- no basename/size guessing needed, unlike
 the old decrypt-viewer/retention.sh approach.
 
+If a separate, unrelated tool (e.g. the "Te_FITI" Home Assistant add-on) is
+also pointed at this NAS share with delete_originals enabled, it deletes each
+encrypted original right after successfully decrypting it (to save space --
+the FEK stays in its own keystore, so nothing is actually lost) and moves
+permanently-undecryptable ones (no wrapped-key block) into a sibling
+broken/<clips-folder>/ tree instead of leaving them in place. Naively that
+makes refresh_status() think those clips were never archived at all, even
+though they're safely accounted for one level up the share tree -- see the
+DECRYPTED/BROKEN handling in refresh_status() below.
+
 Camera-clip-observing jobs, both driven by nas_sync_loop() in server.py:
   - refresh_status(): mounts read-only, compares local vs. remote clip
     (folder+timestamp) groups -> cached coverage percentage.
@@ -60,14 +70,14 @@ _op_lock = threading.Lock()   # serializes mount operations (loop vs. manual ref
 _cache = {"t": 0.0, "total": 0, "on_nas": 0, "percent": 0, "ok": None, "error": None, "clips": {}}
 _media_cache = {"t": 0.0, "ok": None, "error": None, "copied": 0}
 
-MEDIA_ROOTS = ("Music", "LightShow", "Boombox")
+MEDIA_ROOTS = ("Music", "LightShow", "Boombox")  # subfolders of the Media partition, see run/auto.www
 FS_BASE = "/var/www/html/fs"
 LOCAL_TESLACAM = "/mutable/TeslaCam"   # served read-only over SMB, see setup/pi/configure-samba.sh
 
 
-def _mount(mnt, rw):
+def _mount(mnt, rw, share=None):
     server = hubconf.getval("ARCHIVE_SERVER")
-    share = hubconf.getval("SHARE_NAME")
+    share = share if share is not None else hubconf.getval("SHARE_NAME")
     user = hubconf.getval("SHARE_USER")
     password = hubconf.getval("SHARE_PASSWORD")
     vers = hubconf.getval("CIFS_VERSION") or "3.0"
@@ -86,6 +96,20 @@ def _mount(mnt, rw):
         except OSError: pass
     if r.returncode != 0:
         raise RuntimeError((r.stderr or "Mount fehlgeschlagen").splitlines()[-1][:200])
+
+
+def _walk_basenames(root):
+    """{filename -> True} for every .mp4 under root, or empty if root doesn't
+    exist -- used for the DECRYPTED/BROKEN fallback trees, whose internal
+    layout (flat vs. nested-by-date vs. nested-by-event) doesn't line up with
+    EncryptedClips' own, so exact relpath matching isn't reliable there and
+    basenames (each camera+timestamp is already unique) are used instead."""
+    out = set()
+    for root_, _, names in os.walk(root):
+        for nm in names:
+            if nm.endswith(".mp4"):
+                out.add(nm)
+    return out
 
 
 def _umount(mnt):
@@ -142,16 +166,29 @@ def refresh_status(scan_dir):
     if total:
         with _op_lock:
             try:
-                _mount(mnt, rw=False)
+                # Mount the share root (not SHARE_NAME's full .../EncryptedClips
+                # path) so the DECRYPTED/BROKEN fallback trees, which are
+                # siblings of it, are reachable too.
+                full = (hubconf.getval("SHARE_NAME") or "").strip("/")
+                share_root, _, clips_subpath = full.partition("/")
+                _mount(mnt, rw=False, share=share_root)
                 try:
+                    enc_dir = os.path.join(mnt, clips_subpath) if clips_subpath else mnt
                     remote = set()
-                    for root, _, names in os.walk(mnt):
+                    for root, _, names in os.walk(enc_dir):
                         for nm in names:
                             if nm.endswith(".mp4"):
-                                remote.add(os.path.relpath(os.path.join(root, nm), mnt).replace("\\", "/"))
+                                remote.add(os.path.relpath(os.path.join(root, nm), enc_dir).replace("\\", "/"))
+                    # Te_FITI (if present) deletes each original right after a
+                    # successful decrypt and moves undecryptable ones aside --
+                    # see module docstring. A clip missing from EncryptedClips
+                    # is still "on the NAS" if it shows up in either tree.
+                    fallback = _walk_basenames(os.path.join(mnt, "decrypted"))
+                    fallback |= _walk_basenames(os.path.join(mnt, "broken", os.path.basename(clips_subpath) or "EncryptedClips"))
                     for ck, cams in local_groups.items():
                         ts = ck.rsplit("|", 1)[-1]
-                        synced = all(_on_nas(rel, ts, remote) for rel in cams.values())
+                        synced = all(_on_nas(rel, ts, remote) or os.path.basename(rel) in fallback
+                                     for rel in cams.values())
                         clip_status[ck] = synced
                         if synced:
                             on_nas += 1
@@ -239,7 +276,7 @@ def sync_media():
         base = os.path.join(mnt, subpath) if subpath else mnt
         os.makedirs(base, exist_ok=True)
         for root_name in MEDIA_ROOTS:
-            local_dir = os.path.join(FS_BASE, root_name)
+            local_dir = os.path.join(FS_BASE, "Media", root_name)
             if not os.path.isdir(local_dir):   # accessing triggers autofs
                 continue
             dest_dir = os.path.join(base, root_name)
