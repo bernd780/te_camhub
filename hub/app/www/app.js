@@ -393,9 +393,9 @@ async function viewFiles(m,path){
     it.append(el("div","sz",ent.dir?"":human(ent.size)));
     const act=el("div","act");
     if(!ent.dir){const dl=el("button","iconbtn","⬇️");dl.title="Download";dl.onclick=e=>{e.stopPropagation();location.href="api/files/download?path="+encodeURIComponent(rel);};act.append(dl);}
-    if(ent.audio&&rel.replace(/\\/g,"/").startsWith("Boombox/")&&ent.name.toLowerCase().endsWith(".wav")&&ent.size<=1048576){
-      const lc=el("button","iconbtn","🔔");lc.title="Als LockChime festlegen (überschreibt Boombox/LockChime.wav)";
-      lc.onclick=async e=>{e.stopPropagation();if(confirm("„"+ent.name+"“ als LockChime festlegen? Überschreibt Boombox/LockChime.wav.")){
+    if(ent.audio&&rel.replace(/\\/g,"/").startsWith("Media/Boombox/")&&ent.name.toLowerCase().endsWith(".wav")&&ent.size<=1048576){
+      const lc=el("button","iconbtn","🔔");lc.title="Als LockChime festlegen (überschreibt Media/Boombox/LockChime.wav)";
+      lc.onclick=async e=>{e.stopPropagation();if(confirm("„"+ent.name+"“ als LockChime festlegen? Überschreibt Media/Boombox/LockChime.wav.")){
         const r=await jpost("api/files/lockchime",{path:rel});
         if(r.ok){toast("LockChime gesetzt: "+ent.name);viewFiles($("#main"),path);}else{toast("✗ "+(r.error||"Fehler"));}
       }};

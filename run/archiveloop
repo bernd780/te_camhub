@@ -280,7 +280,10 @@ function trim_free_space() {
 }
 
 function fix_errors_in_images () {
-  for i in cam music boombox lightshow
+  # music/boombox/lightshow consolidated onto media_disk.bin -- see
+  # enable_gadget.sh's comment and ENCRYPTED_CLIPS_ISSUE.md's sibling
+  # investigation into slow post-wake recognition.
+  for i in cam media
   do
     img="/backingfiles/${i}_disk.bin"
     if [ -e "$img" ]

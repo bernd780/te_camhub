@@ -66,27 +66,18 @@ then
   ((++lun))
 fi
 
-if [ -e "/backingfiles/music_disk.bin" ]
+# Music/LightShow/Boombox used to each be their own backing image/LUN.
+# Consolidated onto one "media_disk.bin" (Music/LightShow/Boombox as
+# subfolders) -- Tesla identifies each feature by folder name, not by
+# drive identity, so one shared FAT32 volume works the same as three.
+# Fewer LUNs means less USB enumeration for the car to do on every wake,
+# and one fsck pass instead of three at boot (see ENCRYPTED_CLIPS_ISSUE.md's
+# sibling investigation into slow post-wake recognition).
+if [ -e "/backingfiles/media_disk.bin" ]
 then
   mkdir -p "$gadget_root/functions/mass_storage.0/lun.${lun}"
-  echo "/backingfiles/music_disk.bin" > "$gadget_root/functions/mass_storage.0/lun.${lun}/file"
-  echo "TeslaUSB MUSIC $(du -h /backingfiles/music_disk.bin | awk '{print $1}')" > "$gadget_root/functions/mass_storage.0/lun.${lun}/inquiry_string"
-  ((++lun))
-fi
-
-if [ -e "/backingfiles/lightshow_disk.bin" ]
-then
-  mkdir -p "$gadget_root/functions/mass_storage.0/lun.${lun}"
-  echo "/backingfiles/lightshow_disk.bin" > "$gadget_root/functions/mass_storage.0/lun.${lun}/file"
-  echo "TeslaUSB LIGHTSHOW $(du -h /backingfiles/lightshow_disk.bin | awk '{print $1}')" > "$gadget_root/functions/mass_storage.0/lun.${lun}/inquiry_string"
-  ((++lun))
-fi
-
-if [ -e "/backingfiles/boombox_disk.bin" ]
-then
-  mkdir -p "$gadget_root/functions/mass_storage.0/lun.${lun}"
-  echo "/backingfiles/boombox_disk.bin" > "$gadget_root/functions/mass_storage.0/lun.${lun}/file"
-  echo "TeslaUSB BOOMBOX $(du -h /backingfiles/boombox_disk.bin | awk '{print $1}')" > "$gadget_root/functions/mass_storage.0/lun.${lun}/inquiry_string"
+  echo "/backingfiles/media_disk.bin" > "$gadget_root/functions/mass_storage.0/lun.${lun}/file"
+  echo "TeslaUSB MEDIA $(du -h /backingfiles/media_disk.bin | awk '{print $1}')" > "$gadget_root/functions/mass_storage.0/lun.${lun}/inquiry_string"
   ((++lun))
 fi
 

@@ -1,14 +1,8 @@
 #!/bin/dash
 
 case "$1" in
-  Music)
-    diskimage="/backingfiles/music_disk.bin"
-    ;;
-  LightShow)
-    diskimage="/backingfiles/lightshow_disk.bin"
-    ;;
-  Boombox)
-    diskimage="/backingfiles/boombox_disk.bin"
+  Media)
+    diskimage="/backingfiles/media_disk.bin"
     ;;
   *)
     exit 1
