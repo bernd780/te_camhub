@@ -896,13 +896,23 @@ fix_errors_in_images
 # always remove files that fsck recoverd
 clean_cam_mount boot
 
+# Connect before the initial snapshot, not after: the car needs fsck (data
+# integrity) and clean_cam_mount (frees space on the actual backing file,
+# which must happen before the car can start writing to it) done first, but
+# it does not need a snapshot to exist yet -- that only benefits the later
+# archiving pass. make_snapshot.sh's reflink copy touches a new clone file,
+# never the live cam_disk.bin, so running it after the gadget is already
+# connected doesn't race with the car. Moving connect here shaves whatever
+# make_snapshot.sh's initial run costs off the time-to-first-recognized
+# after the car (re)powers the USB port -- see ENCRYPTED_CLIPS_ISSUE.md's
+# sibling investigation, "storage device recognized late after wake".
+connect_usb_drives_to_host
+
 if has_cam_disk
 then
   # don't need another fsck because fix_errors_in_images already did that
   /root/bin/make_snapshot.sh nofsck
 fi
-
-connect_usb_drives_to_host
 
 if archive_is_reachable
 then
