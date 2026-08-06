@@ -22,6 +22,44 @@ then
   fi
 fi
 
+function is_finalized_clip {
+  # An eCryptfs-encrypted clip (Tesla firmware 2026.20+, TeslaCam/EncryptedClips/...)
+  # has its video payload and its wrapped-key header block written as two
+  # separate steps by the car. A snapshot taken in between captures a file
+  # that looks complete (right size, valid eCryptfs magic) but has an
+  # all-zero key block at offset 4096 -- undecryptable forever once archived,
+  # since rsync's size+mtime quick-check treats it as identical to the
+  # eventual finalized version and never re-copies it. See
+  # ENCRYPTED_CLIPS_ISSUE.md for the full writeup (timing evidence, header
+  # layout, why this is the right place to catch it).
+  #
+  # Returns success (0, "go ahead and link it") for anything that isn't an
+  # affected file: plain (non-encrypted) clips, already-finalized encrypted
+  # clips, and any file this check can't read (a transient read error here
+  # must never block linking outright). Returns failure (1) only for the
+  # specific mid-write case, so the caller can skip it for this snapshot --
+  # it will be complete and get linked on the next one.
+  local f=$1
+  case "$f" in
+    *.mp4) ;;
+    *) return 0 ;;
+  esac
+  local magic w1 w2
+  magic=$(od -An -tx4 --endian=big -j 8 -N 8 -- "$f" 2>/dev/null) || return 0
+  read -r w1 w2 <<< "$magic"
+  [ -n "$w1" ] && [ -n "$w2" ] || return 0
+  if [ "$(( 0x$w1 ^ 0x$w2 ))" != "$((0x3C81B7F5))" ]
+  then
+    return 0  # not an eCryptfs header at all -- plain clip
+  fi
+  if cmp -s <(dd if="$f" bs=4096 iflag=skip_bytes,count_bytes skip=4096 count=138 2>/dev/null) \
+            <(head -c 138 /dev/zero)
+  then
+    return 1  # eCryptfs magic present but the key block is still all zero
+  fi
+  return 0
+}
+
 function linksnapshotfiletorecents {
   local file=$1
   local curmnt=$2
@@ -65,12 +103,22 @@ function make_links_for_snapshot {
   # Support both layouts so archiving/linking works either way.
   for f in "$curmnt/TeslaCam/RecentClips/"* "$curmnt/TeslaCam/EncryptedClips/RecentClips/"*
   do
+    if ! is_finalized_clip "$f"
+    then
+      log "skipping not-yet-finalized encrypted clip (key block not written yet): $f"
+      continue
+    fi
     #log "linking $f"
     linksnapshotfiletorecents "$f" "$curmnt" "$finalmnt"
   done
   # also link in any files that were moved to SavedClips
   for f in "$curmnt/TeslaCam/SavedClips"/*/* "$curmnt/TeslaCam/EncryptedClips/SavedClips"/*/*
   do
+    if ! is_finalized_clip "$f"
+    then
+      log "skipping not-yet-finalized encrypted clip (key block not written yet): $f"
+      continue
+    fi
     #log "linking $f"
     linksnapshotfiletorecents "$f" "$curmnt" "$finalmnt"
     # also link it into a SavedClips folder
@@ -85,6 +133,11 @@ function make_links_for_snapshot {
   # and the same for SentryClips
   for f in "$curmnt/TeslaCam/SentryClips/"*/* "$curmnt/TeslaCam/EncryptedClips/SentryClips/"*/*
   do
+    if ! is_finalized_clip "$f"
+    then
+      log "skipping not-yet-finalized encrypted clip (key block not written yet): $f"
+      continue
+    fi
     #log "linking $f"
     linksnapshotfiletorecents "$f" "$curmnt" "$finalmnt"
     local eventfolder=${f%/*}
